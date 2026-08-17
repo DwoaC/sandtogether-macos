@@ -1,0 +1,143 @@
+{
+  "supportedVersions": ["0.5.3", "0.5.2"],
+  "bundle": [
+    {
+      "name": "frame hook (state+FH capture)",
+      "critical": true,
+      "variants": [
+        {
+          "anchor": "ie.FH.events.emit(e,\"frame:update\",{state:",
+          "patched": "ie.FH.events.emit((window.SandTogether&&window.SandTogether._frame&&window.SandTogether._frame(e,ie.FH),e),\"frame:update\",{state:"
+        }
+      ]
+    },
+    {
+      "name": "dig hook (DN)",
+      "variants": [
+        {
+          "anchor": "j=(e,t,n,a,o,s,r={})=>{for(let i=0;i<a.length;i++)",
+          "patched": "j=(e,t,n,a,o,s,r={})=>{if(window.SandTogether&&window.SandTogether._dig&&window.SandTogether._dig(e,t,n,a,o,s,r))return;for(let i=0;i<a.length;i++)"
+        },
+        {
+          "anchor": "M=(e,t,n,a,r,o,s={})=>{for(let i=0;i<a.length;i++)",
+          "patched": "M=(e,t,n,a,r,o,s={})=>{if(window.SandTogether&&window.SandTogether._dig&&window.SandTogether._dig(e,t,n,a,r,o,s))return;for(let i=0;i<a.length;i++)"
+        }
+      ]
+    },
+    {
+      "name": "setCell hook (Gz)",
+      "variants": [
+        {
+          "anchor": "B=(e,t,n,a,s)=>{m.on.setCellId(e.shared.sim,t,n,a),",
+          "patched": "B=(e,t,n,a,s)=>{if(window.SandTogether&&window.SandTogether._setCell&&window.SandTogether._setCell(e,t,n,a,s))return;m.on.setCellId(e.shared.sim,t,n,a),"
+        },
+        {
+          "anchor": "T=(e,t,n,a,o)=>{m.on.setCellId(e.shared.sim,t,n,a),",
+          "patched": "T=(e,t,n,a,o)=>{if(window.SandTogether&&window.SandTogether._setCell&&window.SandTogether._setCell(e,t,n,a,o))return;m.on.setCellId(e.shared.sim,t,n,a),"
+        }
+      ]
+    },
+    {
+      "name": "vacuum hook (j)",
+      "variants": [
+        {
+          "anchor": "j=(e,t,n,a)=>{var s,l,U;const f=y(e);x(t,f);const p=t.data.tanks,",
+          "patched": "j=(e,t,n,a)=>{if(window.SandTogether&&window.SandTogether._vac&&window.SandTogether._vac(e,t,n,a))return;var s,l,U;const f=y(e);x(t,f);const p=t.data.tanks,"
+        },
+        {
+          "anchor": "F=(e,t,n,a)=>{var o,l,u;const f=v(e);w(t,f);const g=t.data.tanks,",
+          "patched": "F=(e,t,n,a)=>{if(window.SandTogether&&window.SandTogether._vac&&window.SandTogether._vac(e,t,n,a))return;var o,l,u;const f=v(e);w(t,f);const g=t.data.tanks,"
+        }
+      ]
+    },
+    {
+      "name": "player-dig flag (I)",
+      "variants": [
+        {
+          "anchor": "I=(e,t,n,a,o)=>{(0,d.DN)(e,n,a,e.store.upgrades.shovel.size.level>0?P:F,o,8)}",
+          "patched": "I=(e,t,n,a,o)=>{window.SandTogether&&(window.SandTogether._pd=1);try{(0,d.DN)(e,n,a,e.store.upgrades.shovel.size.level>0?P:F,o,8)}finally{window.SandTogether&&(window.SandTogether._pd=0)}}"
+        },
+        {
+          "anchor": "O=(e,t,n,a,o)=>{const s=(0,k.uN)(e,e.store.upgrades.shovel.size.level>0?\"shovelLarge\":\"shovel\",r.Np.Shovel,\"tool\",n,a);(0,d.DN)(e,n,a,s.pattern,o,s.power,s.options)}",
+          "patched": "O=(e,t,n,a,o)=>{window.SandTogether&&(window.SandTogether._pd=1);try{const s=(0,k.uN)(e,e.store.upgrades.shovel.size.level>0?\"shovelLarge\":\"shovel\",r.Np.Shovel,\"tool\",n,a);(0,d.DN)(e,n,a,s.pattern,o,s.power,s.options)}finally{window.SandTogether&&(window.SandTogether._pd=0)}}"
+        }
+      ]
+    },
+    {
+      "name": "projectile-update flag (m)",
+      "variants": [
+        {
+          "anchor": "m=(e,t)=>e.store.projectiles.forEach(n=>(0,s.Hm)(e,n,t)),",
+          "patched": "m=(e,t)=>{window.SandTogether&&(window.SandTogether._projCtx=1);try{e.store.projectiles.forEach(n=>(0,s.Hm)(e,n,t))}finally{window.SandTogether&&(window.SandTogether._projCtx=0)}},"
+        },
+        {
+          "anchor": "m=(e,t)=>e.store.projectiles.forEach(n=>(0,o.Hm)(e,n,t)),",
+          "patched": "m=(e,t)=>{window.SandTogether&&(window.SandTogether._projCtx=1);try{e.store.projectiles.forEach(n=>(0,o.Hm)(e,n,t))}finally{window.SandTogether&&(window.SandTogether._projCtx=0)}},"
+        }
+      ]
+    },
+    {
+      "name": "spray flag (_)",
+      "variants": [
+        {
+          "anchor": "_=(e,t)=>{let n=i.A.getGunArmAxis(e.store.player),",
+          "patched": "_=(e,t)=>{window.SandTogether&&window.SandTogether._sprayFlag&&window.SandTogether._sprayFlag();let n=i.A.getGunArmAxis(e.store.player),"
+        },
+        {
+          "anchor": "N=(e,t)=>{let n=i.A.getGunArmAxis(e.store.player),",
+          "patched": "N=(e,t)=>{window.SandTogether&&window.SandTogether._sprayFlag&&window.SandTogether._sprayFlag();let n=i.A.getGunArmAxis(e.store.player),"
+        }
+      ]
+    },
+    {
+      "name": "flamethrower fire hook (A)",
+      "critical": false,
+      "variants": [
+        {
+          "anchor": "s=0)=>{if(t<0||n<0||t>=e.store.world.size.width||n>=e.store.world.size.height)return;const i",
+          "patched": "s=0)=>{if(window.SandTogether&&window.SandTogether._fire&&window.SandTogether._fire(e,t,n,o,s))return;if(t<0||n<0||t>=e.store.world.size.width||n>=e.store.world.size.height)return;const i"
+        }
+      ]
+    },
+    {
+      "name": "cryoblaster freeze hook",
+      "critical": false,
+      "variants": [
+        {
+          "anchor": "x={x:Math.cos(b)*U,y:Math.sin(b)*U};(0,h.Lu)(e,i,l,e=>{if(!(0,u.lV)(e,i,l))return",
+          "patched": "x={x:Math.cos(b)*U,y:Math.sin(b)*U};window.SandTogether&&window.SandTogether._cryo&&window.SandTogether._cryo(e,i,l),(0,h.Lu)(e,i,l,e=>{if(!(0,u.lV)(e,i,l))return"
+        }
+      ]
+    },
+    {
+      "name": "achievements with mods",
+      "variants": [
+        {
+          "anchor": "||(null===(n=e.store.integrity)||void 0===n?void 0:n.modsUsed)||_.A.debug.active",
+          "patched": "/*STA*/||_.A.debug.active"
+        },
+        {
+          "anchor": "||(null===(n=e.store.integrity)||void 0===n?void 0:n.modsUsed)||I.A.debug.active",
+          "patched": "/*STA*/||I.A.debug.active"
+        }
+      ]
+    },
+    {
+      "name": "mutation-queue drop (Lu)",
+      "variants": [
+        {
+          "anchor": "function h(e,t,n,a){o.push({x:t,y:n,apply:a}),i.add(u(t,n))}function m(e){s.push(e)}",
+          "patched": "function h(e,t,n,a){if(window.SandTogether&&window.SandTogether._dropLu&&window.SandTogether._dropLu())return;o.push({x:t,y:n,apply:a}),i.add(u(t,n))}function m(e){if(window.SandTogether&&window.SandTogether._dropLu&&window.SandTogether._dropLu())return;s.push(e)}"
+        },
+        {
+          "anchor": "function p(e,t,n,a){r.push({x:t,y:n,apply:a}),i.add(h(t,n))}function m(e){o.push(e)}",
+          "patched": "function p(e,t,n,a){if(window.SandTogether&&window.SandTogether._dropLu&&window.SandTogether._dropLu())return;r.push({x:t,y:n,apply:a}),i.add(h(t,n))}function m(e){if(window.SandTogether&&window.SandTogether._dropLu&&window.SandTogether._dropLu())return;o.push(e)}"
+        }
+      ]
+    }
+  ],
+  "mainJs": {
+    "singleInstanceAnchor": "const gotTheLock = app.requestSingleInstanceLock();",
+    "singleInstancePatched": "const gotTheLock = process.argv.some((a) => a.startsWith('--st-')) ? true : app.requestSingleInstanceLock();"
+  }
+}

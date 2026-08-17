@@ -1,0 +1,48 @@
+# SandTogether — Co-op Multiplayer mod for Sandustry
+
+**Author: Kamil Padula** · Contributor: **dotNine** · [Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3784750764)
+
+Play [Sandustry](https://store.steampowered.com/app/2764460/Sandustry/) together over the internet — no server, no port forwarding. Steam friend invites (or LAN), up to 4 players, one shared live world: digging, fluids, building, tools, resources and story progression synchronized. Steam achievements keep working.
+
+> ⚠️ Early Access game with no official mod loader — this mod patches the game files. Expect breakage after game updates; we re-anchor quickly (see `src/patches.json`).
+
+## For players
+
+Subscribe on the Workshop, then run `install.bat` from the mod folder once (and again after every game/mod update). Full instructions: [README (EN)](dist-package/README.md) / [INSTRUKCJA (PL)](dist-package/INSTRUKCJA.md).
+
+## Architecture (for contributors)
+
+The game is an Electron app; the simulation is non-deterministic (83× `Math.random` in physics, work-stealing scheduler), so lockstep is impossible. SandTogether is **host-authoritative**:
+
+- **Host** runs the only real simulation and streams the world to clients: dirty 40×40 chunks of `mapData` (RGBA) + `wallData` + `shadowMap` + `authorization` + `sim.cellIds` (collision), 11 B/cell, deflate-compressed, prioritized around player positions (fast lane) with a starvation-free FIFO for the rest and content-hash skipping.
+- **Client** simulation is paused (manager opcode `SetPaused`); rendering stays alive and reads the mirrored buffers every frame. A re-pause heartbeat protects against the game's own unpause paths (ESC menu).
+- **Client actions** (dig, build, demolish, move, vacuum, grabber, flamethrower, cryoblaster, spray, guns…) are captured via small string-patches in `bundle.js` (see `src/patches.json`, multi-version anchor variants) plus game event hooks, forwarded to the host, replayed there authoritatively, and confirmed back through the world stream.
+- **Transports**: Steam P2P (lobbies, invites, `+connect_lobby`, lobby-ID clipboard join) and a dependency-free WebSocket (LAN). Networking lives in the Electron main process (`src/st-main.js`) because the renderer reloads between scenes.
+
+### Repo layout
+
+| Path | What |
+|------|------|
+| `src/sandtogether.js` | The mod (renderer side): HUD, world sync, action forwarding/replay, player models, i18n EN/PL |
+| `src/st-main.js` | Electron main-process side: Steam P2P + WebSocket transports, invites, relays |
+| `src/patches.json` | Anchor/patched string pairs applied to the game's `bundle.js` (+ per-game-version variants) |
+| `src/st-preload-append.js` | Preload bridge (`sandtogetherNet`) |
+| `src/patch.js` | Node-based patcher (dev convenience) |
+| `dist-package/` | What players get: pure-PowerShell installer (no Node needed) + docs |
+| `src/publish-workshop.js` | Steam Workshop publisher (uses the game's bundled steamworks.js) |
+| `MAPA_BUNDLE.md`, `MAPA_WORKERY.md`, `PLAN_COOP.md`, `REKONESANS.md`, `DZIENNIK_ZMIAN.md` | Reverse-engineering notes & changelog (Polish) |
+
+### Dev loop
+
+1. Install the mod into your game once (`dist-package/install.bat`).
+2. Edit `src/sandtogether.js`, then copy it to `<game>/resources/app/dist/js/sandtogether.js` and restart the game (bundle patches only need re-applying when `patches.json` changes).
+3. Two-instance local testing: launch a second copy with `--st-userdata=<dir>` (bypasses the single-instance lock; any `--st-*` arg does) and use `Host LAN` / `Join LAN` on `127.0.0.1`.
+4. Logs: `%APPDATA%\Sandustry\logs\main.log` — everything the mod does is tagged `[SandTogether]`.
+
+### Contributing
+
+PRs welcome. Keep changes host-authoritative (clients must never mutate the shared world locally except through the confirmed-mirror pattern), keep `patches.json` anchors unique-in-bundle, and note game-build compatibility in your PR. Bug reports: attach both players' `main.log`.
+
+## License
+
+[MIT](LICENSE) © Kamil Padula

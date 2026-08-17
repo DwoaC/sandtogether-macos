@@ -1,0 +1,11 @@
+# build artifacts / release zips (published on Steam Workshop instead)
+SandTogether-*.zip
+SandTogether-0.2/
+SandTogether-0.5.0/
+*.log
+.log-offset
+
+# local-only stuff
+node_modules/
+mod/
+backups/

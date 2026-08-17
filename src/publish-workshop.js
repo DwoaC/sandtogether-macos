@@ -64,6 +64,9 @@ Both players must run the same mod version (the panel warns in red if they diffe
 [h2]Installation[/h2]
 This mod patches the game files (the game has no built-in mod loader for Early Access yet). Subscribe, then run [b]install.ps1[/b] from this item's folder (right-click → Run with PowerShell). Full instructions in README.md (EN) / INSTRUKCJA.md (PL). Both players need the mod (same version — the mod checks and warns on mismatch).
 
+[h2]Open source / Contributing[/h2]
+The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandtogether]github.com/IronBamBam1990/sandtogether[/url] — MIT license. Bug fixes, features and ports (e.g. a macOS installer — the mod code itself is cross-platform) are welcome as pull requests. The README covers the architecture and dev workflow.
+
 [i]Polska wersja instrukcji w pliku INSTRUKCJA.md. Active development — feedback welcome![/i]`;
 
 (async () => {
@@ -90,7 +93,7 @@ This mod patches the game files (the game has no built-in mod loader for Early A
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.7-beta — CRITICAL update, fixes tonight\'s live-reported breakage: (1) Today\'s game update moved the internal structures API — that\'s why the joining player suddenly COULD NOT BUILD. The mod now finds the API dynamically on any build. (2) MASSIVE DESYNC on big factories fixed: the world stream had a hard cap and far-away chunks starved forever (the joiner was seeing the world 20+ seconds in the past, so every action failed). Now the area around each player always streams fresh, the rest catches up fairly, and unchanged chunks are skipped entirely. (3) Closing the in-game pause menu (ESC) silently un-paused the joiner\'s local simulation, which then fought the host\'s stream — the #1 hidden desync source. Fixed. (4) After a disconnect the joiner\'s world stays frozen instead of silently forking (press Stop to play solo). BOTH players must update and restart.',
+    changeNote: 'v0.9.8-beta — the mod is now OPEN SOURCE: github.com/IronBamBam1990/sandtogether (MIT). Pull requests welcome — including a macOS installer, the mod code itself is cross-platform. Also in this version: the panel now shows a RED warning with exact versions when the two players run different mod versions (this was the #1 hidden cause of "nothing works" reports — one player on an old mod and no way to tell). Includes all 0.9.7 fixes: works with today\'s game update, big-factory desync fixed (player-area streams always fresh), ESC-menu no longer breaks sync, disconnect freezes the world instead of silently forking. IMPORTANT: after every mod update BOTH players must re-run install.bat and check the panel shows the same version.',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

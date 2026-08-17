@@ -30,7 +30,7 @@ The game is an Electron app; the simulation is non-deterministic (83× `Math.ran
 | `src/patch.js` | Node-based patcher (dev convenience) |
 | `dist-package/` | What players get: pure-PowerShell installer (no Node needed) + docs |
 | `src/publish-workshop.js` | Steam Workshop publisher (uses the game's bundled steamworks.js) |
-| `MAPA_BUNDLE.md`, `MAPA_WORKERY.md`, `PLAN_COOP.md`, `REKONESANS.md`, `DZIENNIK_ZMIAN.md` | Reverse-engineering notes & changelog (Polish) |
+| `BUNDLE_MAP.md`, `WORKERS_MAP.md`, `COOP_PLAN.md`, `RECON.md`, `CHANGELOG.md` | Reverse-engineering notes, architecture plan & full changelog |
 
 ### Dev loop
 

@@ -9,3 +9,10 @@ SandTogether-0.5.0/
 node_modules/
 mod/
 backups/
+
+# Polish working notes (English translations are in the repo: CHANGELOG.md, BUNDLE_MAP.md, WORKERS_MAP.md, COOP_PLAN.md, RECON.md)
+DZIENNIK_ZMIAN.md
+MAPA_BUNDLE.md
+MAPA_WORKERY.md
+PLAN_COOP.md
+REKONESANS.md

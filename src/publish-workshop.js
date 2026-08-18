@@ -31,14 +31,16 @@ Both players need to do this. Full step-by-step in README.md (English) / INSTRUK
 
 [b]Po polsku:[/b] Po zasubskrybowaniu wejdź do folderu moda (Steam → prawy na Sandustry → Zarządzaj → Przeglądaj pliki lokalne → folder wyżej → steamapps\\workshop\\content\\2764460\\3784750764\\), kliknij prawym [b]install.bat[/b] → Uruchom. Instalator sam znajdzie grę i wgra moda. Odpal grę — panel SandTogether jest w prawym górnym rogu. Musi to zrobić każdy z graczy. Pełna instrukcja: INSTRUKCJA.md.
 
-[h2]Features (v0.5 — full co-op)[/h2]
+[h2]Features (v0.9.36 — full co-op)[/h2]
 [list]
-[*] Steam invites (or LAN) — zero network setup
-[*] Shared live world: sand, fluids, digging, unlocked zones — one authoritative simulation streamed in real time
-[*] All player tools work for everyone: shovel, spray, firearms & rockets, vacuum
-[*] One shared factory: build, demolish and move machines, conveyors and pipes on both sides
-[*] Item pickup with full effects (artifacts, orbs, keys), shared resources & story progression
-[*] Creatures, drones and projectiles synchronized; world-event sounds forwarded
+[*] Steam invites (or LAN with auto-reconnect) — zero network setup
+[*] Shared live world: sand, fluids, digging, unlocked zones — one authoritative simulation streamed in real time (fog-of-war areas are skipped, so joining is fast even on huge maps)
+[*] Every player tool works for everyone: shovel, spray, firearms & rockets, vacuum, grabber, flamethrower, cryoblaster, demolisher
+[*] One shared factory: build, demolish, move, copy-paste blueprints, pipes, signal wiring & buttons — on both sides
+[*] Shared team progression: research/upgrades pool, tech tree, story steps, objectives, critter collection, factory processes
+[*] Item pickup with full effects (artifacts, orbs, keys), shared resources; creatures, drones and projectiles synchronized; world-event sounds forwarded
+[*] See your teammate: real player models with equipped tools, build ghosts and grabber crosshairs, off-screen arrows
+[*] Steam achievements keep working; the panel warns in red on any mod-version mismatch
 [*] Bilingual UI (English / Polski)
 [/list]
 
@@ -63,6 +65,11 @@ Both players must run the same mod version (the panel warns in red if they diffe
 
 [h2]Installation[/h2]
 This mod patches the game files (the game has no built-in mod loader for Early Access yet). Subscribe, then run [b]install.ps1[/b] from this item's folder (right-click → Run with PowerShell). Full instructions in README.md (EN) / INSTRUKCJA.md (PL). Both players need the mod (same version — the mod checks and warns on mismatch).
+
+[h2]💛 Thank you — this mod is community-built[/h2]
+Huge thanks to the code contributors: [b]dotNine[/b] (player models, world auto-transfer, collision sync) and [b]Knight-HD[/b] (building placement, grabber rework, teammate ghosts — a whole pull request!).
+
+And to the testers whose precise bug reports shaped almost every release: [b]TCentraL[/b], [b]Warlow[/b], [b]NanYu_sad.[/b], [b]ЗаКеЛьМан[/b], [b]星灵[/b], [b]Lofar666[/b], [b]Bobulator333[/b], [b]thatsmaik[/b], [b]uolkx[/b], [b]MIXUIL[/b], [b]Justin[/b], [b]Hooye!![/b], [b]tony.s.jennette[/b], [b]Sprut[/b] — and everyone else who reported, tested and played. A short description + your log file (%APPDATA%\\Sandustry\\logs\\main.log) is the fastest route to a fix.
 
 [h2]Open source / Contributing[/h2]
 The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandtogether]github.com/IronBamBam1990/sandtogether[/url] — MIT license. Bug fixes, features and ports (e.g. a macOS installer — the mod code itself is cross-platform) are welcome as pull requests. The README covers the architecture and dev workflow.
@@ -93,7 +100,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.36-beta — PERFORMANCE: joining is now 2-4x faster. The world stream skips fully-undiscovered (fogged) chunks — on a big map that\'s most of it, and it was all being sent as black nothing; a chunk streams the moment it gets revealed. Plus LAN auto-reconnect (5 attempts every 3s with a status message) — a dropped connection heals itself instead of silently freezing. Includes the whole 0.9.34-35 batch: shared research/upgrades, pipe demolition, story/critters/signals/copy-paste by the joining player, host-pause notice, fast rejoin. Both players update + re-run install.bat.',
+    changeNote: 'Description refresh: the feature list now reflects v0.9.36 (it still said v0.5!), and a long-overdue THANK YOU section credits the contributors and every tester by name — this mod is community-built. Mod files unchanged since v0.9.36-beta (joining 2-4x faster via fog-skip, LAN auto-reconnect, plus the whole shared-progression batch).',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

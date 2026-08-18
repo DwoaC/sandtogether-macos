@@ -9,11 +9,28 @@ Polska instrukcja: zobacz `INSTRUKCJA.md`.
 
 ## Installation
 
+### Windows
+
 1. Have Sandustry installed from Steam (launch it once normally).
 2. Right-click `install.ps1` → **Run with PowerShell**
    (if Windows blocks it: `powershell -ExecutionPolicy Bypass -File install.ps1`).
 3. The script finds the game, unpacks its code and applies the mod
    (installs Node.js automatically if missing).
+
+### macOS
+
+1. Have Sandustry installed from Steam (launch it once normally).
+2. Double-click `install.command` (or run it in Terminal; pass the path to
+   `Sandustry.app` as an argument if your Steam library is somewhere unusual).
+   No Node.js needed — it runs on the game's own Electron runtime.
+3. Launch the game with `SandTogether-Launch.command` — it re-installs the mod
+   automatically if a Steam update reverted it, then starts the game through
+   Steam.
+
+> **macOS limitation:** Steam friend invites don't complete on macOS yet —
+> the invite arrives but the join doesn't finish. Use **Host LAN / Join LAN**
+> (`ip:27777`) instead; LAN co-op works fully (same network, VPN like
+> Tailscale, etc.).
 
 ## How to play (over the internet, via Steam — no network setup)
 
@@ -57,11 +74,13 @@ whenever you want a fresh copy.
 - Creatures/drones on the client update at 10 Hz (slight jitter possible)
 - If both players grab the same item in the same instant, a rare duplicate can occur
 - After a **Steam game update** the mod is removed — run `install.ps1` again
+  (macOS: `install.command`, or just launch via `SandTogether-Launch.command`)
 
 ## Uninstall
 
 Steam → Sandustry → Properties → Installed Files → Verify integrity of game files,
-then delete the `resources\app` folder.
+then delete the `resources\app` folder
+(macOS: `Sandustry.app/Contents/Resources/app`).
 
 ---
 SandTogether by **Kamil Padula**

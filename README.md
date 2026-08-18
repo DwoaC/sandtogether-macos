@@ -8,7 +8,7 @@ Play [Sandustry](https://store.steampowered.com/app/2764460/Sandustry/) together
 
 ## For players
 
-Subscribe on the Workshop, then run `install.bat` from the mod folder once (and again after every game/mod update). Full instructions: [README (EN)](dist-package/README.md) / [INSTRUKCJA (PL)](dist-package/INSTRUKCJA.md).
+Subscribe on the Workshop, then run `install.bat` (Windows) or `install.command` (macOS) from the mod folder once (and again after every game/mod update). Full instructions: [README (EN)](dist-package/README.md) / [INSTRUKCJA (PL)](dist-package/INSTRUKCJA.md). macOS: LAN co-op works; Steam invites don't complete yet (see the README's macOS note).
 
 ## Architecture (for contributors)
 
@@ -34,10 +34,10 @@ The game is an Electron app; the simulation is non-deterministic (83× `Math.ran
 
 ### Dev loop
 
-1. Install the mod into your game once (`dist-package/install.bat`).
+1. Install the mod into your game once (`dist-package/install.bat`; macOS: `dist-package/install.command` — no Node needed, it runs on the game's own Electron via `ELECTRON_RUN_AS_NODE`).
 2. Edit `src/sandtogether.js`, then copy it to `<game>/resources/app/dist/js/sandtogether.js` and restart the game (bundle patches only need re-applying when `patches.json` changes).
 3. Two-instance local testing: launch a second copy with `--st-userdata=<dir>` (bypasses the single-instance lock; any `--st-*` arg does) and use `Host LAN` / `Join LAN` on `127.0.0.1`.
-4. Logs: `%APPDATA%\Sandustry\logs\main.log` — everything the mod does is tagged `[SandTogether]`.
+4. Logs: `%APPDATA%\Sandustry\logs\main.log` (macOS: `~/Library/Logs/Sandustry/main.log`) — everything the mod does is tagged `[SandTogether]`.
 
 ### Contributing
 

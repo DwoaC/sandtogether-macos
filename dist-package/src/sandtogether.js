@@ -1215,8 +1215,8 @@
 				else log("BŁĄD: brak API setCellId");
 			} else if (msg.k === "place") {
 				// klient poprosił o postawienie — host stawia AUTORYTATYWNIE. force=true: ufamy walidacji
-				// klienta (building:place odpaliło się u niego = jego kontrola kolizji przeszła), więc
-				// pomijamy kontrolę kolizji hosta (clearance:-1) — inaczej minimalna różnica stanu → build null → "auto-delete".
+				// klienta (kontrola kolizji przeszła u niego), więc pomijamy kontrolę hosta podając
+				// clearance=Available (patrz CLEARANCE_AVAILABLE) — inaczej minimalna różnica stanu → build null → "auto-delete".
 				if ((ST._plRxDiag = (ST._plRxDiag || 0) + 1) <= 300) log("HOST RX place:", msg.type, "@", msg.x, msg.y, "od", fromId);
 				ST._applyingNet = true;
 				let built = null;

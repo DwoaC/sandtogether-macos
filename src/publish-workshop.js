@@ -103,7 +103,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.39-beta — THE LAST TIME YOU EVER NEED install.bat! The mod now AUTO-UPDATES: at every game launch it checks the Workshop folder (which Steam keeps fresh), installs any newer version by itself — files, game patches, everything — and restarts the game once. Run install.bat one final time to get 0.9.39, and from then on both players are always on the same version automatically. This kills the No.1 source of "nothing works" reports (one player on an old mod). Also in this line: row-delta streaming (2-10x less bandwidth), Steam auto-rejoin, different-game-build warning, chat, per-player memory, machine settings sync, instant drops (0.9.37-38).',
+    changeNote: 'Docs refresh: the bundled README.md (EN) / INSTRUKCJA.md (PL) were still describing v0.4-0.5 — they now match v0.9.39 (one-time install + auto-update, current feature list, chat, per-player memory). Mod files unchanged since v0.9.39-beta.',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

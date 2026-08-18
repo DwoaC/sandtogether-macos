@@ -1,49 +1,63 @@
-# SandTogether — coop mod dla Sandustry (wersja 0.4)
+# SandTogether — coop mod dla Sandustry (v0.9.39-beta)
 
-Mod dodaje pełny multiplayer coop do Sandustry. Obaj gracze MUSZĄ mieć zainstalowanego
-moda w tej samej wersji i tę samą wersję gry (0.5.3).
+**Autor: Kamil Padula** · Współtwórcy: **dotNine**, **Knight-HD**
 
-## Instalacja
+Mod dodaje pełny multiplayer coop do Sandustry — jeden wspólny żywy świat przez
+zaproszenia Steam (lub LAN), do 4 graczy. Osiągnięcia Steam działają normalnie.
+
+## Instalacja — RAZ, na zawsze
 
 1. Miej zainstalowane Sandustry ze Steama (odpal raz normalnie).
-2. Kliknij prawym na `install.ps1` → **Uruchom w programie PowerShell**
-   (jeśli Windows blokuje: `powershell -ExecutionPolicy Bypass -File install.ps1`).
-3. Skrypt sam znajdzie grę, rozpakuje jej kod i nałoży moda.
+2. Kliknij prawym na `install.bat` → **Uruchom** (albo `install.ps1` → Uruchom
+   w PowerShell; jeśli Windows blokuje: `powershell -ExecutionPolicy Bypass -File install.ps1`).
+3. Odpal grę — panel **SandTogether** pojawi się w prawym górnym rogu.
+
+**To wszystko — na zawsze.** Od wersji 0.9.39 mod **aktualizuje się sam** przy
+każdym starcie gry (z Twojej subskrypcji Warsztatu; gra raz się zrestartuje przy
+aktualizacji). Instalatora nie odpalasz nigdy więcej, a obaj gracze zawsze mają
+tę samą wersję.
 
 ## Jak grać (internet, przez Steam — bez konfiguracji sieci)
 
 **Host:**
-1. Odpal grę → panel **SandTogether** (prawy górny róg) → **Host (Steam)** → **Zaproś** (wybierz znajomego).
-2. Wczytaj/rozpocznij grę, zapisz ją i kliknij **Wyślij świat**.
+1. Panel → **Host (Steam)** → **Zaproś** (wybierz znajomego).
+2. Wczytaj/rozpocznij grę — świat wyśle się dołączającemu automatycznie.
 
 **Dołączający:**
-1. Przyjmij zaproszenie Steam.
-2. Po komunikacie o imporcie: **Load Game** → wczytaj otrzymany świat.
-3. Od tej chwili grasz w świecie hosta (status "lustro hosta" w panelu).
+1. Przyjmij zaproszenie Steam (działa przy otwartej i zamkniętej grze).
+2. Po "World imported!": **Load Game** → wczytaj otrzymany świat.
+3. Gracie w jednym wspólnym świecie (panel pokazuje "lustro hosta").
 
-**LAN/test:** Host LAN / Dołącz LAN (`ip:27777`). **Kliknij nagłówek panelu** (lub Ctrl+Shift+H), żeby go schować/pokazać. **Resync** wymusza pełne odświeżenie.
+**LAN:** Host LAN / Dołącz LAN (wpisz `ip` lub `ip:port`, domyślnie 27777).
+**Czat:** pole wiadomości w panelu, Enter wysyła.
+**Panel:** klik w nagłówek lub Ctrl+Shift+H chowa/pokazuje. **Resync** wymusza pełne odświeżenie świata.
 
-## Co działa (0.4)
+## Co działa (v0.9.39 — pełny coop)
 
-- Połączenie przez Steam (zaproszenia) lub LAN
-- Widzicie swoje postacie i nicki na żywo
-- **Wspólny świat na żywo**: piasek, płyny, kopanie, zmiany terenu — świat hosta
-  streamowany do klienta (10–50 KB/s), symulacja liczy się tylko u hosta
-- **Kopanie i stawianie elementów przez klienta** — wykonywane u hosta
-- **Budynki i maszyny**: stawianie/burzenie po obu stronach + stan maszyn
-  uzgadniany co 2,5 s; taśmy, rury, fabryka — wspólne
-- **Zasoby wspólne** (złoto/energia/produkcja — stan hosta u obu)
-- **Odkurzacz klienta** — zbiera elementy ze świata hosta do swoich zbiorników
+- Jeden autorytatywny żywy świat: piasek, płyny, kopanie, teren, odblokowane strefy
+  (streaming delta + pomijanie mgły = mało pasma, szybkie dołączanie)
+- Każde narzędzie u każdego gracza: łopata, spray, broń palna i rakiety, vacuum,
+  grabber, miotacz ognia, cryoblaster, demolisher
+- Jedna wspólna fabryka: budowa, rozbiórka, przenoszenie, copy-paste blueprintów,
+  rury, sygnały i przyciski, ustawienia maszyn — po obu stronach
+- Wspólna progresja drużyny: pula badań/ulepszeń, tech tree, fabuła, cele,
+  kolekcja critterów, procesy fabryczne
+- Podnoszenie przedmiotów z pełnymi efektami; stworki, drony, pociski, dźwięki
+- Prawdziwe modele graczy z narzędziami, duchy budowania, celownik grabbera,
+  strzałki poza ekranem; czat drużynowy
+- Pamięć per-gracz: wracasz do świata tam, gdzie skończyłeś, ze swoim ekwipunkiem
+- Auto-reconnect (Steam i LAN); czytelne ostrzeżenia o pauzie hosta, różnicy
+  wersji moda i różnych buildach gry
 
-## Ograniczenia (w kolejce do 0.5)
+## Ważne dla dołączającego
 
-- Broń palna/rakiety klienta nie działają na świat (kopanie/spray/vacuum — tak)
-- Przenoszenie budynku przez klienta może się cofnąć (obejście: zburz i postaw)
-- Podnoszenie przedmiotów z ziemi przez klienta jest zawodne
-- Stworki/drony sterowane przez hosta (u klienta mogą drgać)
-- Po **aktualizacji gry na Steam** mod znika — odpal `install.ps1` ponownie
+Nie polegaj na zapisie gry będąc klientem — Twój zapis utrwala świat z momentu
+dołączenia. Autorytatywny jest zapis hosta.
 
 ## Odinstalowanie
 
 Steam → Sandustry → Właściwości → Zainstalowane pliki → Sprawdź spójność plików gry,
 potem usuń folder `resources\app`.
+
+---
+SandTogether — **Kamil Padula** · kod źródłowy: https://github.com/IronBamBam1990/sandtogether (MIT)

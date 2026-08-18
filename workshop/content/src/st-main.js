@@ -11,6 +11,8 @@
 
 const net = require('net');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const TAG = '[SandTogether:net]';
 let fileLog = null;
@@ -128,9 +130,10 @@ function startWsServer(port) {
   S.wsServer.listen(port, () => emitEvent('hosting', { transport: 'ws', port }));
 }
 
-function joinWs(host, port) {
+function joinWs(host, port, _retry) {
   stopNetworking('restart');
   S.role = 'client'; S.transport = 'ws';
+  const retryCount = _retry || 0;
   const key = crypto.randomBytes(16).toString('base64');
   const sock = net.connect(port, host, () => {
     sock.write('GET / HTTP/1.1\r\nHost: ' + host + ':' + port + '\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ' + key + '\r\nSec-WebSocket-Version: 13\r\n\r\n');
@@ -153,7 +156,23 @@ function joinWs(host, port) {
     emitEvent('joined', { transport: 'ws', host, port });
     netSend({ t: 'hello', nick: S.myNick, ver: PROTO_VER });
   });
-  sock.on('close', () => { S.peers.delete('host'); emitEvent('peer-disconnected', { id: 'host' }); });
+  sock.on('close', () => {
+    S.peers.delete('host');
+    emitEvent('peer-disconnected', { id: 'host' });
+    // AUTO-RECONNECT (LAN): zerwane łącze wskrzeszamy co 3s. Licznik prób jedzie przez parametr _retry
+    // (przetrwa kolejne sockety!). Udany handshake = stabilne łącze → przyszłe zerwanie znów ma 5 prób.
+    // Stop usera / inne połączenie w międzyczasie przerywa (role/transport/peers check).
+    if (S.role === 'client' && S.transport === 'ws' && S.wsClient === sock) {
+      const next = upgraded ? 1 : retryCount + 1; // po stabilnym łączu licz od 1; po nieudanej próbie +1
+      if (next > 5) { emitEvent('error', { where: 'ws-join', message: 'reconnect failed after 5 tries' }); return; }
+      setTimeout(() => {
+        if (S.role !== 'client' || S.transport !== 'ws' || S.peers.size > 0) return;
+        log('WS reconnect próba', next, '/5 →', host + ':' + port);
+        emitEvent('reconnecting', { transport: 'ws', attempt: next });
+        try { joinWs(host, port, next); } catch (e) {}
+      }, 3000);
+    }
+  });
   sock.on('error', (e) => emitEvent('error', { where: 'ws-join', message: e.message }));
 }
 
@@ -189,7 +208,14 @@ function registerSteamCallbacks() {
       log('P2P session accepted:', String(sid64));
     } catch (e) { log('P2PSessionRequest error:', e.message, JSON.stringify(data)); }
   });
-  cb.register(CB.P2PSessionConnectFail, (data) => emitEvent('error', { where: 'p2p', message: 'P2P connect fail', data: safeJson(data) }));
+  cb.register(CB.P2PSessionConnectFail, (data) => {
+    emitEvent('error', { where: 'p2p', message: 'P2P connect fail', data: safeJson(data) });
+    // klient: rejoin dopiero po POWTÓRNYM failu w 10s (pojedynczy chwilowy błąd nie zrywa sesji)
+    const now = Date.now();
+    S._p2pFails = (S._p2pFails || []).filter((t) => now - t < 10000);
+    S._p2pFails.push(now);
+    if (S._p2pFails.length >= 2) { S._p2pFails = []; steamRejoin(1); }
+  });
   cb.register(CB.GameLobbyJoinRequested, async (data) => {
     // Znajomy kliknął "Dołącz" w Steam — dołączamy do lobby hosta.
     try {
@@ -257,10 +283,27 @@ async function hostSteam() {
   return { lobbyId: String(S.lobby.id) };
 }
 
+// AUTO-REJOIN Steam (odpowiednik reconnectu WS): po utracie P2P/hosta próbujemy wrócić do
+// ostatniego lobby co 3s, max 5 razy. Nowe świadome połączenie/Stop zeruje licznik.
+function steamRejoin(attempt) {
+  if (S.role !== 'client' || S.transport !== 'steam' || !S.lastLobbyId) return;
+  if (S._rejoinPending) return; // jedna pętla naraz
+  if (attempt > 5) { emitEvent('error', { where: 'steam-rejoin', message: 'rejoin failed after 5 tries' }); return; }
+  S._rejoinPending = true;
+  setTimeout(async () => {
+    S._rejoinPending = false;
+    if (S.role !== 'client' || S.transport !== 'steam') return;
+    log('Steam rejoin próba', attempt, '/5 → lobby', S.lastLobbyId);
+    emitEvent('reconnecting', { transport: 'steam', attempt });
+    try { await joinSteamLobby(S.lastLobbyId); } catch (e) { steamRejoin(attempt + 1); }
+  }, 3000);
+}
+
 async function joinSteamLobby(lobbyIdStr) {
   if (!S.steam) throw new Error('Steam client niedostępny');
   stopNetworking('restart');
   S.role = 'client'; S.transport = 'steam';
+  S.lastLobbyId = lobbyIdStr;
   S.lobby = await S.steam.matchmaking.joinLobby(BigInt(lobbyIdStr));
   const owner = S.lobby.getOwner();
   const sid = String(owner.steamId64 !== undefined ? owner.steamId64 : owner);
@@ -290,7 +333,7 @@ function handleIncoming(peerId, text, steamSid) {
   }
   emitMsg(peerId, obj);
   // host relays player positions/hellos to the other clients (3+ player support)
-  if (S.role === 'host' && (obj.t === 'pos' || obj.t === 'hello') && S.peers.size > 1) {
+  if (S.role === 'host' && (obj.t === 'pos' || obj.t === 'hello' || obj.t === 'chat' || obj.t === 'myproj' || obj.t === 'snd') && S.peers.size > 1) {
     const relay = { t: 'relay', from: peerId, msg: obj };
     for (const p of S.peers.values()) if (p.id !== peerId) sendToPeer(p, relay);
   }
@@ -326,11 +369,93 @@ function stopNetworking(reason) {
 
 function safeJson(o) { try { return JSON.parse(JSON.stringify(o, (k, v) => typeof v === 'bigint' ? String(v) : v)); } catch (e) { return String(o); } }
 
+// ============================================================================
+// AUTO-UPDATE Z WARSZTATU: przy każdym starcie gry porównujemy wersję moda w folderze
+// Workshop (Steam aktualizuje go sam) z zainstalowaną. Nowsza → kopiujemy pliki, nakładamy
+// patche bundle (idempotentnie, jak install.ps1) i restartujemy grę. Gracz robi install.bat
+// tylko RAZ — każda kolejna aktualizacja wchodzi sama. Autor z nowszą lokalną wersją niż
+// Workshop NIE jest cofany (porównanie numeryczne, update tylko w górę).
+// ============================================================================
+const WORKSHOP_ITEM = '3784750764';
+function parseVer(file) {
+  try {
+    const m = /const VER = "(\d+)\.(\d+)\.(\d+)/.exec(fs.readFileSync(file, 'utf8').slice(0, 4000));
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  } catch (e) { return null; }
+}
+function applyBundlePatches(bundlePath, patches) {
+  let s = fs.readFileSync(bundlePath, 'utf8');
+  let dirty = false, criticalFail = false, appliedN = 0;
+  for (const pt of patches.bundle || []) {
+    let applied = false, already = false;
+    for (const v of pt.variants || []) {
+      if (s.indexOf(v.patched) >= 0) { already = true; break; }
+      const i1 = s.indexOf(v.anchor);
+      if (i1 < 0) continue;
+      if (s.indexOf(v.anchor, i1 + 1) >= 0) continue; // kotwica nieunikalna w tym wariancie
+      s = s.slice(0, i1) + v.patched + s.slice(i1 + v.anchor.length);
+      dirty = true; applied = true; appliedN++;
+      break;
+    }
+    if (!applied && !already && pt.critical) criticalFail = true;
+  }
+  if (dirty) fs.writeFileSync(bundlePath, s);
+  return { criticalFail, appliedN };
+}
+function autoUpdateFromWorkshop() {
+  try {
+    const appDir = __dirname; // .../steamapps/common/Sandustry/resources/app
+    const steamapps = path.resolve(appDir, '..', '..', '..', '..');
+    const ws = path.join(steamapps, 'workshop', 'content', '2764460', WORKSHOP_ITEM);
+    const wsMod = path.join(ws, 'src', 'sandtogether.js');
+    const localMod = path.join(appDir, 'dist', 'js', 'sandtogether.js');
+    if (!fs.existsSync(wsMod) || !fs.existsSync(localMod)) return;
+    const wv = parseVer(wsMod), lv = parseVer(localMod);
+    if (!wv || !lv) return;
+    const cmp = (wv[0] - lv[0]) || (wv[1] - lv[1]) || (wv[2] - lv[2]);
+    if (cmp <= 0) return; // lokalna >= Workshop → nic do roboty (m.in. autor moda)
+    log('AUTO-UPDATE: Workshop ma ' + wv.join('.') + ', lokalnie ' + lv.join('.') + ' — aktualizuję...');
+    fs.copyFileSync(wsMod, localMod);
+    try { fs.copyFileSync(path.join(ws, 'src', 'st-main.js'), path.join(appDir, 'st-main.js')); } catch (e) {}
+    try {
+      const pl = path.join(appDir, 'preload.js');
+      let ps = fs.readFileSync(pl, 'utf8');
+      if (ps.indexOf('sandtogetherNet') < 0) { ps += '\n' + fs.readFileSync(path.join(ws, 'src', 'st-preload-append.js'), 'utf8'); fs.writeFileSync(pl, ps); }
+    } catch (e) {}
+    const patches = JSON.parse(fs.readFileSync(path.join(ws, 'src', 'patches.json'), 'utf8'));
+    const res = applyBundlePatches(path.join(appDir, 'dist', 'js', 'bundle.js'), patches);
+    log('AUTO-UPDATE: pliki skopiowane, patche bundle: +' + res.appliedN + (res.criticalFail ? ' (UWAGA: krytyczna kotwica nie pasuje — build gry nowszy niż mod!)' : ''));
+    // restart, żeby nowe pliki (bundle/renderer/main) faktycznie się załadowały
+    const { app } = require('electron');
+    log('AUTO-UPDATE: restart gry z nową wersją moda ' + wv.join('.'));
+    app.relaunch();
+    app.exit(0);
+  } catch (e) { log('autoUpdate error:', e.message); }
+}
+
+// Odcisk buildu GRY (rozmiar bundle + sha1 pierwszych 256KB): Steam potrafi serwować różnym ludziom
+// różne buildy o tym samym numerze wersji — różne enumy/kotwice. Porównywany przy wymianie mver.
+let _gameFpCache;
+function gameFingerprint() {
+  if (_gameFpCache !== undefined) return _gameFpCache;
+  try {
+    const p = path.join(__dirname, 'dist', 'js', 'bundle.js');
+    const st = fs.statSync(p);
+    const fd = fs.openSync(p, 'r');
+    const buf = Buffer.alloc(Math.min(262144, st.size));
+    fs.readSync(fd, buf, 0, buf.length, 0);
+    fs.closeSync(fd);
+    _gameFpCache = st.size + '-' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 10);
+  } catch (e) { _gameFpCache = null; }
+  return _gameFpCache;
+}
+
 // ---------------------------------------------------------------------------
 // Init + IPC
 // ---------------------------------------------------------------------------
 function init(opts) {
   S.getMainWindow = opts.getMainWindow;
+  autoUpdateFromWorkshop(); // nowsza wersja w folderze Workshop → auto-instalacja + restart gry
   // Diagnostyka: pokaż argumenty startu (widać czy Steam podał +connect_lobby przy dołączaniu)
   try { log('start argv:', JSON.stringify(process.argv.slice(1))); } catch (e) {}
   // Steam inicjalizuje się asynchronicznie po starcie appki — próbuj do skutku
@@ -370,6 +495,7 @@ function init(opts) {
     role: S.role, transport: S.transport, myNick: S.myNick, myId: S.myId,
     lobbyId: S.lobby ? String(S.lobby.id) : null,
     peers: [...S.peers.values()].map((p) => ({ id: p.id, kind: p.kind, nick: p.nick })),
+    gameFp: gameFingerprint(),
   }));
   // Tryb autotestu: --st-autotest=host | --st-autotest=join (testy dwóch instancji bez klikania)
   const autotest = process.argv.find((a) => a.startsWith('--st-autotest='));

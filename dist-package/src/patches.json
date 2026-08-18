@@ -155,6 +155,16 @@
       ]
     },
     {
+      "name": "demolish module exports (pipeZn/areaL)",
+      "critical": false,
+      "variants": [
+        {
+          "anchor": "H=e=>{const t=e.session.action.customData.pos;return(0,i.GO)(t.start.x,t.start.y,t.end.x,t.end.y)}}",
+          "patched": "H=e=>{const t=e.session.action.customData.pos;return(0,i.GO)(t.start.x,t.start.y,t.end.x,t.end.y)};window.SandTogether&&(window.SandTogether._pipeZn=p.Zn,window.SandTogether._areaL=L)}"
+        }
+      ]
+    },
+    {
       "name": "achievements with mods",
       "variants": [
         {

@@ -1,62 +1,60 @@
-# SandTogether — co-op multiplayer mod for Sandustry (v0.5.0)
+# SandTogether — co-op multiplayer mod for Sandustry (v0.9.39-beta)
 
-**Author: Kamil Padula**
+**Author: Kamil Padula** · Contributors: **dotNine**, **Knight-HD**
 
-SandTogether adds full co-op multiplayer to Sandustry. Both players MUST have
-the mod installed (same version) and the same game version (0.5.3).
+SandTogether adds full co-op multiplayer to Sandustry — one shared live world over
+Steam friend invites (or LAN), up to 4 players. Steam achievements keep working.
 
 Polska instrukcja: zobacz `INSTRUKCJA.md`.
 
-## Installation
+## Installation — ONCE, ever
 
 1. Have Sandustry installed from Steam (launch it once normally).
-2. Right-click `install.ps1` → **Run with PowerShell**
-   (if Windows blocks it: `powershell -ExecutionPolicy Bypass -File install.ps1`).
-3. The script finds the game, unpacks its code and applies the mod
-   (installs Node.js automatically if missing).
+2. Right-click `install.bat` → **Run** (or `install.ps1` → Run with PowerShell;
+   if Windows blocks it: `powershell -ExecutionPolicy Bypass -File install.ps1`).
+3. Launch the game — the **SandTogether** panel appears in the top-right corner.
+
+**That's it — forever.** Since v0.9.39 the mod **auto-updates itself** at every game
+launch from your Workshop subscription (the game restarts once when it does).
+You never run the installer again, and both players always match versions.
 
 ## How to play (over the internet, via Steam — no network setup)
 
 **Host:**
-1. Launch the game → the **SandTogether** panel (top-right corner) → **Host (Steam)** → **Invite** (pick your friend).
-2. Load/start a game, save it, then click **Send world**.
+1. Panel → **Host (Steam)** → **Invite** (pick your friend).
+2. Load/start a game — the world is sent to the joiner automatically.
 
 **Joining player:**
-1. Accept the Steam invite.
-2. After the import message: **Load Game** → load the received world.
-3. From now on you play in the host's world (the panel shows "host mirror").
+1. Accept the Steam invite (works with the game open or closed).
+2. After "World imported!": **Load Game** → load the received world.
+3. You now share one live world (the panel shows "host mirror").
 
-**LAN/testing:** Host LAN / Join LAN (`ip:27777`). **Click the panel header** (or Ctrl+Shift+H) to hide/show it.
-**Resync** forces a full world refresh.
+**LAN:** Host LAN / Join LAN (type `ip` or `ip:port`, default 27777).
+**Chat:** type in the panel's message box, press Enter.
+**Hide/show panel:** click its header or Ctrl+Shift+H. **Resync** forces a full world refresh.
 
-## What works (0.5 — full co-op)
+## What works (v0.9.39 — full co-op)
 
-- Connection via Steam (friend invites) or LAN; up to 4 players
-- You see each other's characters, nicknames and projectiles live
-- **Shared live world**: sand, fluids, digging, terrain changes, unlocked zones —
-  the host's world is streamed to the client (10–50 KB/s); one authoritative simulation
-- **Client weapons fully work**: digging, spray, firearms & rockets (impacts executed on host)
-- **Buildings & machines**: place, demolish AND move on both sides; machine state
-  reconciled every 2.5 s; conveyors, pipes, the whole factory — shared
-- **Item pickup** by both players (with proper effects: artifacts, orbs, keys)
-- **Creatures & drones** streamed to the client (10 Hz)
-- **Shared resources and story progression** (gold/energy/production/gloom)
-- **Client's vacuum** — collects into its own tanks with real capacity tiers
-- World-event sounds forwarded to the client
+- One authoritative live world: sand, fluids, digging, terrain, unlocked zones
+  (row-delta streaming + fog-of-war skipping = low bandwidth, fast joins)
+- Every tool for every player: shovel, spray, firearms & rockets, vacuum, grabber,
+  flamethrower, cryoblaster, demolisher
+- One shared factory: build, demolish, move, copy-paste blueprints, pipes,
+  signal wiring & buttons, machine settings — on both sides
+- Shared team progression: research/upgrade pool, tech tree, story steps,
+  objectives, critter collection, factory processes
+- Item pickups with full effects; creatures, drones, projectiles, world sounds
+- Real player models with equipped tools, build ghosts, grabber crosshairs,
+  off-screen arrows; team chat
+- Per-player memory: rejoin a world and you're back where you left off, with
+  your inventory
+- Auto-reconnect on both transports; clear warnings for host-pause, version
+  mismatch and different game builds
 
 ## Important note for the joining player
 
-While connected as a client, do not rely on saving the game — your save would
-capture the world state from the moment you joined, not the current one.
-The host's save is the authoritative one; ask the host to use **Send world**
-whenever you want a fresh copy.
-
-## Notes & known behaviors
-
-- Remote players' projectiles render as simple tracers (not full sprites)
-- Creatures/drones on the client update at 10 Hz (slight jitter possible)
-- If both players grab the same item in the same instant, a rare duplicate can occur
-- After a **Steam game update** the mod is removed — run `install.ps1` again
+Don't rely on saving the game while connected as a client — your save captures
+the world from the moment you joined. The host's save is the authoritative one.
 
 ## Uninstall
 
@@ -64,4 +62,4 @@ Steam → Sandustry → Properties → Installed Files → Verify integrity of g
 then delete the `resources\app` folder.
 
 ---
-SandTogether by **Kamil Padula**
+SandTogether by **Kamil Padula** · source: https://github.com/IronBamBam1990/sandtogether (MIT)

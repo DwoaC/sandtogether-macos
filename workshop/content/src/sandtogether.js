@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.33-beta";
+	const VER = "0.9.39-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -36,6 +36,9 @@
 		en: {
 			offline: "offline", btn_host: "Host (Steam)", btn_invite: "Invite", btn_host_lan: "Host LAN",
 			btn_join_lan: "Join LAN", btn_connect: "Connect", btn_stop: "Stop", btn_send_world: "Send world", btn_resync: "Resync",
+			host_paused: "Host paused (menu) — world frozen, will resume automatically", sync_stalled: "No world data from host for {0}s…",
+			reconnecting: "Connection lost — reconnecting (attempt {0}/5)…",
+			chat_ph: "chat message…", chat_me: "You",
 			btn_join_id: "Join by ID (clipboard)", lobby_copied: "Copied!",
 			clipboard_no_id: "Clipboard has no Lobby ID — first click the host's green Lobby ID line to copy it",
 			hint: "click header to hide (Ctrl+Shift+H)", by: "by " + AUTHOR + " + " + CONTRIBUTORS,
@@ -63,6 +66,9 @@
 		pl: {
 			offline: "offline", btn_host: "Host (Steam)", btn_invite: "Zaproś", btn_host_lan: "Host LAN",
 			btn_join_lan: "Dołącz LAN", btn_connect: "Połącz", btn_stop: "Stop", btn_send_world: "Wyślij świat", btn_resync: "Resync",
+			host_paused: "Host w pauzie (menu) — świat zamrożony, wznowi się sam", sync_stalled: "Brak danych świata od hosta od {0}s…",
+			reconnecting: "Zerwane połączenie — łączę ponownie (próba {0}/5)…",
+			chat_ph: "wiadomość czatu…", chat_me: "Ty",
 			btn_join_id: "Dołącz po ID (schowek)", lobby_copied: "Skopiowano!",
 			clipboard_no_id: "Schowek nie zawiera Lobby ID — najpierw kliknij zieloną linię Lobby ID u hosta, żeby je skopiować",
 			hint: "kliknij nagłówek by ukryć (Ctrl+Shift+H)", by: "autor: " + AUTHOR + " + " + CONTRIBUTORS,
@@ -137,6 +143,16 @@
 		_sndWarned: false,
 	});
 	ST._sprayFlag = () => { ST._sprayCtx = 1; queueMicrotask(() => { ST._sprayCtx = 0; }); };
+	// HEARTBEAT HOSTA (fix G4): gdy host pauzuje (menu), frame:update NIE odpala → cały sync zamiera
+	// bez słowa. setInterval to timer JS — działa mimo pauzy sima. Klient dostaje hb i wie, co się dzieje.
+	setInterval(() => {
+		try {
+			if (ST.net.role === "host" && ST.peers.size && ST.state && net) {
+				const p = !!(ST.state.session && ST.state.session.paused);
+				net.send({ t: "hb", p });
+			}
+		} catch (e) {}
+	}, 1000);
 
 	log("Renderer mod załadowany", VER);
 
@@ -187,6 +203,39 @@
 	// Prawidłowy typ elementu do sieci: liczba całkowita > 0. Odsiewa null/undefined/0 (pusty slot tanku,
 	// T[o+2] hors-bornes u zdesynchronizowanego klienta) — inaczej host robi createAt(...,undefined) i się wywala.
 	const validElement = (v) => Number.isInteger(v) && v > 0;
+	// PER-GRACZ PERSYSTENCJA (G7-lite): join resetował klienta do gracza z save'a HOSTA (pozycja,
+	// ekwipunek). Profil klienta zapisujemy per świat-hosta (localStorage, klucz = zaufany wid)
+	// i przywracamy po starcie lustra. Zasoby/upgrade'y są wspólne (drużynowe) — te nie wymagają profilu.
+	function profileSave(state) {
+		try {
+			if (!isClientSync() || !ST.wsx.paused || !ST._trustedWid) return;
+			const p = state.store.player;
+			if (!p || typeof p.x !== "number") return;
+			const prof = { x: p.x, y: p.y, t: Date.now() };
+			try { if (Array.isArray(p.inventory)) prof.inv = JSON.parse(JSON.stringify(p.inventory)); } catch (e) {}
+			localStorage.setItem("st_prof_" + ST._trustedWid, JSON.stringify(prof));
+		} catch (e) {}
+	}
+	function profileRestore(state, wid) {
+		try {
+			const raw = localStorage.getItem("st_prof_" + wid);
+			if (!raw) return;
+			const prof = JSON.parse(raw);
+			const p = state.store.player;
+			if (!p) return;
+			if (typeof prof.x === "number" && typeof prof.y === "number") {
+				p.x = prof.x; p.y = prof.y;
+				if (p.velocity) { p.velocity.x = 0; p.velocity.y = 0; }
+				const pp = arr(state.shared.playerPos); if (pp && pp.length >= 2) { pp[0] = prof.x; pp[1] = prof.y; }
+			}
+			// ekwipunek: przywracamy tylko gdy struktura wygląda zdrowo (plain items z id)
+			if (Array.isArray(prof.inv) && Array.isArray(p.inventory) && prof.inv.every((i) => i && typeof i === "object")) {
+				try { p.inventory.length = 0; for (const it of prof.inv) p.inventory.push(it); } catch (e) {}
+			}
+			log("Profil klienta przywrócony dla świata", wid, "(pozycja " + Math.round(prof.x) + "," + Math.round(prof.y) + (prof.inv ? " + ekwipunek)" : ")"));
+		} catch (e) {}
+	}
+
 	// Grabber (klient): wyzeruj cellId komórki lokalnie i zapamiętaj ją, żeby grabber nie wziął jej ponownie
 	// zanim host potwierdzi usunięcie przez lustro. Wołane tylko po stronie klienta (renderujący lustro).
 	function grabClearLocal(state, x, y) {
@@ -261,6 +310,19 @@
 	const setSyncInfo = (text) => {
 		if (ST._hud) ST._hud.querySelector("#st-sync").textContent = text;
 	};
+	// czat: dopisz linię (max 5 widocznych), tekst przez textContent (zero HTML injection)
+	const addChat = (nick, text) => {
+		try {
+			if (!ST._hud) return;
+			const lg = ST._hud.querySelector("#st-chat-log");
+			if (!lg) return;
+			const line = document.createElement("div");
+			const b = document.createElement("b"); b.textContent = nick + ": "; b.style.color = "#7af";
+			line.appendChild(b); line.appendChild(document.createTextNode(text));
+			lg.appendChild(line);
+			while (lg.children.length > 5) lg.removeChild(lg.firstChild);
+		} catch (e) {}
+	};
 
 	const isClientSync = () => ST.net.role === "client" && ST.state;
 	const isHostSync = () => ST.net.role === "host" && ST.state && ST.peers.size > 0;
@@ -292,21 +354,25 @@
 					if (hostInWorld) sendWorld();
 				}
 			} else if (ev.kind === "peer-disconnected") {
+				if (ST.state) profileSave(ST.state); // utrwal profil PRZED ewentualną zmianą stanu (G7-lite)
 				ST.peers.delete(ev.id); removePeerPuppet(ev.id);
 				setStatus(t("player_left", ST.peers.size + 1), "#fa5");
 				// KLIENT ZOSTAJE ZAPAUZOWANY — ciche odpauzowanie tworzyło rozwidlony świat (gracz "grał dalej"
 				// lokalnie nie wiedząc, że wszystko przepadnie przy ponownym joinie). Chcesz grać solo → Stop.
 			} else if (ev.kind === "stopped") {
+				if (ST.state) profileSave(ST.state); // przed resetem roli (isClientSync jeszcze true)
 				ST.net.role = "idle"; ST.peers.clear(); removeAllPeerPuppets(); setStatus(t("offline"), "#aaa"); showInviteButton(false); ST.net.lobbyId = null; updateLobbyIdDisplay(); updatePingDisplay();
 				ST._fireQ = []; ST._cryoQ = []; ST._grabbedCells.clear(); ST._placedCells.clear();
 				ST._gotHostWorld = false;
 				setClientPaused(false);
+			} else if (ev.kind === "reconnecting") { setStatus(t("reconnecting", ev.attempt), "#fd5");
 			} else if (ev.kind === "version-mismatch") setStatus(t("ver_mismatch"), "#f66");
 			else if (ev.kind === "error") setStatus(t("error", ev.message), "#f66");
 		});
 		net.onMsg(({ from, msg }) => handleMsg(from, msg));
 		net.status().then((s) => {
 			ST.net.role = s.role; ST.net.transport = s.transport;
+			ST._gameFp = s.gameFp || null; // odcisk buildu gry (guard różnych buildów między graczami)
 			for (const p of s.peers) ST.peers.set(p.id, { nick: p.nick, x: 0, y: 0, tx: 0, ty: 0, lastSeen: performance.now() });
 			if (s.role === "host") setStatus("HOST (" + s.transport + ") — gracze: " + (s.peers.length + 1));
 			else if (s.role === "client") setStatus("POŁĄCZONO — gracze: " + (s.peers.length + 1));
@@ -346,7 +412,7 @@
 			p.nick = msg.nick || "?";
 			ST.peers.set(from, p);
 			setStatus(t("players", ST.peers.size + 1));
-			try { net.send({ t: "mver", v: VER }, from); } catch (e) {} // wymiana wersji MODA (PROTO_VER nie łapie różnic 0.9.x)
+			try { net.send({ t: "mver", v: VER, gf: ST._gameFp || null }, from); } catch (e) {} // wersja MODA + odcisk buildu GRY
 			// stary mod (≤0.9.7) nie zna mver i nie odpowie — po 5s bez odpowiedzi ALARM (przypadek "ziomek na 0.9.0")
 			setTimeout(() => {
 				const pp = ST.peers.get(from);
@@ -362,6 +428,23 @@
 				setStatus(t("ver_mismatch") + " [" + ((p && p.nick) || from) + ": " + msg.v + " / you: " + VER + "]", "#f66");
 				log("RÓŻNE WERSJE MODA:", from, "ma", msg.v, "— ja mam", VER);
 			} else log("wersja moda OK u", (p && p.nick) || from, "->", msg.v);
+			// odcisk buildu GRY (guard R3): różne buildy = różne enumy elementów/kotwice → ostrzeż zamiast cichej korupcji
+			if (msg.gf && ST._gameFp && msg.gf !== ST._gameFp) {
+				setStatus("⚠ DIFFERENT GAME BUILDS! [" + ((p && p.nick) || from) + "] — update the game on both sides", "#f66");
+				log("RÓŻNE BUILDY GRY:", from, "ma", msg.gf, "— ja mam", ST._gameFp);
+			}
+		} else if (msg.t === "wi") {
+			if (ST.net.role === "client" && ST.state && ST.wsx.paused) { ST._applyingNet = true; try { applyWorldItems(ST.state, msg.wi); } finally { ST._applyingNet = false; } }
+		} else if (msg.t === "chat") {
+			const nick = (ST.peers.get(from) && ST.peers.get(from).nick) || "?";
+			addChat(nick, String(msg.m || "").slice(0, 200));
+		} else if (msg.t === "hb") {
+			// heartbeat hosta (fix G4): jedyny sygnał, który przechodzi gdy host pauzuje (frame stoi)
+			if (ST.net.role === "client") {
+				ST._lastHb = performance.now();
+				if (msg.p && !ST._hostPausedShown) { ST._hostPausedShown = true; setStatus(t("host_paused"), "#fd5"); }
+				else if (!msg.p && ST._hostPausedShown) { ST._hostPausedShown = false; setStatus(t("players", ST.peers.size + 1)); }
+			}
 		} else if (msg.t === "wc") {
 			applyWorldBatch(msg).catch((e) => log("apply error:", e.message));
 		} else if (msg.t === "act") {
@@ -483,7 +566,7 @@
 		if (!W) return;
 		const d = chunkDims(W, H);
 		for (let i = 0; i < d.cx * d.cy; i++) ST.wsx.pending.add(i);
-		if (ST.wsx.hashes) ST.wsx.hashes.clear(); // pełny re-send: hash-skip nie może pomijać "niezmienionych" (nowy klient ich nie ma)
+		if (ST.wsx.rowH) ST.wsx.rowH.clear(); // pełny re-send: row-delta nie może pomijać "niezmienionych" wierszy (nowy klient ich nie ma)
 		log("Pełny świat zakolejkowany:", d.cx * d.cy, "chunków");
 	}
 
@@ -533,43 +616,81 @@
 			// serializacja v4: [u16 cx][u16 cy][u8 cw][u8 ch] + per-komórka: 4 map + 1 wall + 1 shadow + 1 auth + 4 cellIds + 1 elemType = 12 B
 			const parts = [];
 			let size = 0;
+			let fogSkipped = 0;
 			for (const idx of take) {
 				const ccx = idx % d.cx, ccy = Math.floor(idx / d.cx);
 				const x0 = ccx * CHUNK, y0 = ccy * CHUNK;
 				const cw = Math.min(CHUNK, W - x0), ch = Math.min(CHUNK, H - y0);
 				if (cw <= 0 || ch <= 0) continue;
-				const buf = new Uint8Array(6 + cw * ch * 12);
+				// FOG-SKIP (optymalizacja dołączania): chunk CAŁKOWICIE nieodkryty (shadow=255 wszędzie)
+				// jest u klienta czarny — nie wysyłamy. Po odkryciu shadow się zmienia → chunk brudny → poleci.
+				// (initial fill: z 9216 chunków realnie idzie tylko odkryta część mapy — dołączanie 2-4x szybciej)
+				if (shadow) {
+					let fogged = true;
+					for (let r = 0; r < ch && fogged; r++) {
+						const src = (y0 + r) * W + x0;
+						for (let c = 0; c < cw; c++) if (shadow[src + c] !== 255) { fogged = false; break; }
+					}
+					if (fogged) { fogSkipped++; continue; }
+				}
+				// ROW-DELTA v5: hash per WIERSZ (12*cw bajtów przez 6 warstw); wysyłamy tylko zmienione wiersze.
+				// Poziomy ruch (woda w kanale, taśmy) = 1-3 wiersze zamiast całych 40 → 2-10x mniej pasma.
+				// Pamięć: 9216 chunków × 40 × 4B ≈ 1,5 MB. Pełny re-send = rowH.clear() w enqueueFullWorld.
+				if (!w.rowH) w.rowH = new Map();
+				let rh = w.rowH.get(idx);
+				if (!rh || rh.length < ch) { rh = new Uint32Array(CHUNK); rh.fill(0); w.rowH.set(idx, rh); }
+				const etRows = new Uint8Array(cw * ch); // warstwa typu elementu liczona raz (hash + zapis)
+				if (cellIds32 && etype) {
+					for (let r = 0; r < ch; r++) for (let cc = 0; cc < cw; cc++) {
+						const cid = cellIds32[(y0 + r) * W + x0 + cc];
+						etRows[r * cw + cc] = (cid >= ELEMENTS_MIN && cid <= ELEMENTS_MAX) ? (etype[cid - ELEMENTS_MIN] || 0) & 0xff : 0;
+					}
+				}
+				const fnvRow = (r) => {
+					let h = 0x811c9dc5;
+					const m0 = ((y0 + r) * W + x0) * 4, s0 = (y0 + r) * W + x0;
+					for (let i = 0; i < cw * 4; i++) { h ^= map[m0 + i]; h = (h * 0x01000193) >>> 0; }
+					for (let i = 0; i < cw; i++) { h ^= wall[s0 + i]; h = (h * 0x01000193) >>> 0; }
+					if (shadow) for (let i = 0; i < cw; i++) { h ^= shadow[s0 + i]; h = (h * 0x01000193) >>> 0; }
+					if (auth) for (let i = 0; i < cw; i++) { h ^= auth[s0 + i]; h = (h * 0x01000193) >>> 0; }
+					if (sim) { const sb = new Uint8Array(sim.buffer, sim.byteOffset + s0 * 4, cw * 4); for (let i = 0; i < cw * 4; i++) { h ^= sb[i]; h = (h * 0x01000193) >>> 0; } }
+					for (let i = 0; i < cw; i++) { h ^= etRows[r * cw + i]; h = (h * 0x01000193) >>> 0; }
+					return h === 0 ? 1 : h; // 0 zarezerwowane = "nigdy nie wysłany"
+				};
+				const mask = new Uint8Array(5); // 40 bitów
+				const rows = [];
+				for (let r = 0; r < ch; r++) {
+					const h = fnvRow(r);
+					if (rh[r] !== h) { rh[r] = h; mask[r >> 3] |= 1 << (r & 7); rows.push(r); }
+				}
+				if (!rows.length) continue; // nic się nie zmieniło w chunku
+				const buf = new Uint8Array(11 + rows.length * cw * 12);
 				const dv = new DataView(buf.buffer);
 				dv.setUint16(0, ccx, true); dv.setUint16(2, ccy, true);
 				buf[4] = cw; buf[5] = ch;
-				let o = 6;
-				for (let r = 0; r < ch; r++) { const src = ((y0 + r) * W + x0) * 4; buf.set(map.subarray(src, src + cw * 4), o); o += cw * 4; }
-				for (let r = 0; r < ch; r++) { const src = (y0 + r) * W + x0; buf.set(wall.subarray(src, src + cw), o); o += cw; }
-				for (let r = 0; r < ch; r++) { const src = (y0 + r) * W + x0; if (shadow) buf.set(shadow.subarray(src, src + cw), o); o += cw; }
-				for (let r = 0; r < ch; r++) { const src = (y0 + r) * W + x0; if (auth) buf.set(auth.subarray(src, src + cw), o); o += cw; }
-				for (let r = 0; r < ch; r++) { const src = (y0 + r) * W + x0; if (sim) buf.set(new Uint8Array(sim.buffer, sim.byteOffset + src * 4, cw * 4), o); o += cw * 4; }
-				// warstwa typu elementu (1 B/komórkę): cellId∈[MIN,MAX] → etype[cellId-MIN], inaczej 0. Naprawia grabbera u klienta.
-				for (let r = 0; r < ch; r++) { for (let cc = 0; cc < cw; cc++) { let ty = 0; if (cellIds32 && etype) { const cid = cellIds32[(y0 + r) * W + x0 + cc]; if (cid >= ELEMENTS_MIN && cid <= ELEMENTS_MAX) ty = etype[cid - ELEMENTS_MIN] || 0; } buf[o++] = ty & 0xff; } }
-				// hash-skip: identyczna zawartość jak przy ostatniej wysyłce → nie wysyłaj (FNV-1a nad bajtami chunka)
-				let hh = 0x811c9dc5;
-				for (let i = 6; i < buf.length; i++) { hh ^= buf[i]; hh = (hh * 0x01000193) >>> 0; }
-				if (!w.hashes) w.hashes = new Map();
-				if (w.hashes.get(idx) === hh) continue;
-				w.hashes.set(idx, hh);
+				buf.set(mask, 6);
+				let o = 11;
+				for (const r of rows) { const src = ((y0 + r) * W + x0) * 4; buf.set(map.subarray(src, src + cw * 4), o); o += cw * 4; }
+				for (const r of rows) { const src = (y0 + r) * W + x0; buf.set(wall.subarray(src, src + cw), o); o += cw; }
+				for (const r of rows) { const src = (y0 + r) * W + x0; if (shadow) buf.set(shadow.subarray(src, src + cw), o); o += cw; }
+				for (const r of rows) { const src = (y0 + r) * W + x0; if (auth) buf.set(auth.subarray(src, src + cw), o); o += cw; }
+				for (const r of rows) { const src = (y0 + r) * W + x0; if (sim) buf.set(new Uint8Array(sim.buffer, sim.byteOffset + src * 4, cw * 4), o); o += cw * 4; }
+				for (const r of rows) { buf.set(etRows.subarray(r * cw, r * cw + cw), o); o += cw; }
 				parts.push(buf); size += buf.length;
 			}
 			if (!parts.length) { w.busy = false; return; }
 			const all = new Uint8Array(size);
 			let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
 			const packed = await deflate(all);
-			net.send({ t: "wc", v: 4, wid: state.store.meta && state.store.meta.worldId, scene: state.store.scene && state.store.scene.active, W, H, n: parts.length, d: b64enc(packed) });
+			net.send({ t: "wc", v: 5, wid: state.store.meta && state.store.meta.worldId, scene: state.store.scene && state.store.scene.active, W, H, n: parts.length, d: b64enc(packed) });
 			// statystyki
 			w.applyBytes += packed.length; w.applyCount += parts.length;
+			w.fogSkipped = (w.fogSkipped || 0) + fogSkipped;
 			if (now - w.statT > 2000) {
 				const info = t("sync_up", Math.round(w.applyBytes / 2048), Math.round(w.applyCount / 2), w.pending.size);
 				setSyncInfo(info);
-				log("SYNC-HOST", info);
-				w.applyBytes = 0; w.applyCount = 0; w.statT = now;
+				log("SYNC-HOST", info, w.fogSkipped ? "(fog-skip: " + w.fogSkipped + ")" : "");
+				w.applyBytes = 0; w.applyCount = 0; w.statT = now; w.fogSkipped = 0;
 			}
 		} catch (e) { log("batch error:", e.message); }
 		w.busy = false;
@@ -600,7 +721,9 @@
 			// Ufamy gdy: (a) już zaufany, (b) okno po auto-load, LUB (c) dostaliśmy świat OD tego hosta (world-begin)
 			// i OBOJE jesteśmy w grze (scene≠1) — czyli klient faktycznie wczytał save hosta (auto- lub ręcznie).
 			const bothInWorld = msg.scene !== 1 && myScene !== 1;
-			const trusting = ST._trustedWid === msg.wid || (ST._pendingTrustUntil && performance.now() < ST._pendingTrustUntil) || (ST._gotHostWorld && bothInWorld);
+			// _lastGoodWid: wid hosta zaufany w POPRZEDNIEJ sesji (przetrwa reconnect) — ten sam wid
+			// = dokładnie ten sam świat, który już mamy wczytany → rejoin BEZ ponownego transferu (fix G8-lite)
+			const trusting = ST._trustedWid === msg.wid || (ST._pendingTrustUntil && performance.now() < ST._pendingTrustUntil) || (ST._gotHostWorld && bothInWorld) || (ST._lastGoodWid === msg.wid && bothInWorld);
 			if (!trusting) {
 				setStatus(t("other_world"), "#f66");
 				if (!ST.wsx.mismatchLogged) { ST.wsx.mismatchLogged = true; log("REJECT world: worldId host=" + msg.wid + " me=" + myWid + " scene h/c=" + msg.scene + "/" + myScene); }
@@ -608,6 +731,7 @@
 			}
 			if (ST._trustedWid !== msg.wid) log("worldId różni się po auto-load, ale ufam (świeżo odebrany od hosta):", msg.wid);
 			ST._trustedWid = msg.wid; ST._pendingTrustUntil = 0;
+			ST._lastGoodWid = msg.wid; // pamięć przez reconnect (celowo NIE czyszczona przy joined/stopped)
 		}
 		const { map, wall, shadow, W, H } = worldBuffers(state);
 		if (!map || W !== msg.W || H !== msg.H) {
@@ -615,7 +739,7 @@
 			if (!ST.wsx.mismatchLogged) { ST.wsx.mismatchLogged = true; log("REJECT world: dims host=" + msg.W + "x" + msg.H + " me=" + W + "x" + H + " map=" + (!!map)); }
 			return;
 		}
-		if (msg.v !== 4) { setStatus(t("ver_mismatch"), "#f66"); return; } // v4 = doszła warstwa elementData.type (grabber)
+		if (msg.v !== 5) { setStatus(t("ver_mismatch"), "#f66"); return; } // v5 = row-delta (maska zmienionych wierszy per chunk)
 		if (ST.wsx.mismatchLogged) { ST.wsx.mismatchLogged = false; log("World MATCH — lustro rusza"); }
 		ST.wsx.mismatchWarned = false;
 		setClientPaused(true);
@@ -627,16 +751,21 @@
 		while (o + 6 <= raw.length) {
 			const ccx = dv.getUint16(o, true), ccy = dv.getUint16(o + 2, true);
 			const cw = raw[o + 4], ch = raw[o + 5];
-			o += 6;
+			// v5 ROW-DELTA: 5-bajtowa maska wierszy; w streamie są TYLKO zaznaczone wiersze (reszta bez zmian)
+			if (o + 11 > raw.length) break;
+			const mask = raw.subarray(o + 6, o + 11);
+			o += 11;
 			const x0 = ccx * CHUNK, y0 = ccy * CHUNK;
-			if (o + cw * ch * 12 > raw.length) break; // uszkodzony batch
-			for (let r = 0; r < ch; r++) { const dst = ((y0 + r) * W + x0) * 4; map.set(raw.subarray(o, o + cw * 4), dst); o += cw * 4; }
-			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; wall.set(raw.subarray(o, o + cw), dst); o += cw; }
-			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; if (shadow) shadow.set(raw.subarray(o, o + cw), dst); o += cw; }
-			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; if (auth) auth.set(raw.subarray(o, o + cw), dst); o += cw; }
-			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; if (sim) new Uint8Array(sim.buffer, sim.byteOffset + dst * 4, cw * 4).set(raw.subarray(o, o + cw * 4)); o += cw * 4; }
+			const rows = [];
+			for (let r = 0; r < ch; r++) if (mask[r >> 3] & (1 << (r & 7))) rows.push(r);
+			if (o + rows.length * cw * 12 > raw.length) break; // uszkodzony batch
+			for (const r of rows) { const dst = ((y0 + r) * W + x0) * 4; map.set(raw.subarray(o, o + cw * 4), dst); o += cw * 4; }
+			for (const r of rows) { const dst = (y0 + r) * W + x0; wall.set(raw.subarray(o, o + cw), dst); o += cw; }
+			for (const r of rows) { const dst = (y0 + r) * W + x0; if (shadow) shadow.set(raw.subarray(o, o + cw), dst); o += cw; }
+			for (const r of rows) { const dst = (y0 + r) * W + x0; if (auth) auth.set(raw.subarray(o, o + cw), dst); o += cw; }
+			for (const r of rows) { const dst = (y0 + r) * W + x0; if (sim) new Uint8Array(sim.buffer, sim.byteOffset + dst * 4, cw * 4).set(raw.subarray(o, o + cw * 4)); o += cw * 4; }
 			// warstwa typu elementu: wpisz do elementData.type[cellId-MIN] żeby getResolvedTypeFromCellId działało (grabber)
-			for (let r = 0; r < ch; r++) { for (let cc = 0; cc < cw; cc++) { const ty = raw[o++]; if (etype && cellIds32) { const cid = cellIds32[(y0 + r) * W + x0 + cc]; if (cid >= ELEMENTS_MIN && cid <= ELEMENTS_MAX) etype[cid - ELEMENTS_MIN] = ty; } } }
+			for (const r of rows) { for (let cc = 0; cc < cw; cc++) { const ty = raw[o++]; if (etype && cellIds32) { const cid = cellIds32[(y0 + r) * W + x0 + cc]; if (cid >= ELEMENTS_MIN && cid <= ELEMENTS_MAX) etype[cid - ELEMENTS_MIN] = ty; } } }
 			applied++;
 		}
 		// Ochrona grabbera: lustro mogło przynieść STARĄ zawartość komórki (host jeszcze nie przetworzył
@@ -663,7 +792,11 @@
 			}
 		}
 		const w = ST.wsx;
-		if (applied > 0 && !w.everApplied) { w.everApplied = true; log("Pierwsze paczki świata zastosowane — lustro działa"); setStatus(t("players", ST.peers.size + 1)); }
+		if (applied > 0) ST._lastWcT = performance.now(); // do wskaźnika zatoru (sync_stalled)
+		if (applied > 0 && !w.everApplied) {
+			w.everApplied = true; log("Pierwsze paczki świata zastosowane — lustro działa"); setStatus(t("players", ST.peers.size + 1));
+			profileRestore(state, msg.wid || ST._trustedWid); // wróć tam, gdzie skończyłeś w TYM świecie (G7-lite)
+		}
 		w.applyBytes += msg.d.length * 0.75; w.applyCount += applied;
 		const now = performance.now();
 		if (now - w.statT > 2000) {
@@ -679,6 +812,34 @@
 	// ------------------------------------------------------------------
 	const slimStruct = (s) => ({ type: s.type, x: s.x, y: s.y, data: s.data });
 	const structKey = (s) => s.type + "@" + s.x + "," + s.y;
+	// KONFIG MASZYN przez klienta (G5b): edycje structure.data w UI maszyn nie mają eventu — wykrywamy
+	// je diffem JSON w POBLIŻU gracza (tam się klika; pełny skan tysięcy struktur co klatkę = za drogo).
+	const dataSeenSet = (k, d) => { if (!ST._dataSeen) ST._dataSeen = new Map(); try { ST._dataSeen.set(k, JSON.stringify(d == null ? null : d)); } catch (e) {} };
+	function scanDataEditsIfDue(state) {
+		const now = performance.now();
+		if (now - (ST._dataScanT || 0) < 800) return;
+		ST._dataScanT = now;
+		try {
+			if (!ST._dataSeen) return;
+			if (!ST._dataEdited) ST._dataEdited = new Map();
+			const px = state.store.player.x / 4, py = state.store.player.y / 4, R = 48; // ~ekran wokół gracza (komórki)
+			for (const s of state.store.structures || []) {
+				if (Math.abs(s.x - px) > R || Math.abs(s.y - py) > R) continue;
+				const k = structKey(s);
+				const prev = ST._dataSeen.get(k);
+				if (prev === undefined) { dataSeenSet(k, s.data); continue; }
+				let cur; try { cur = JSON.stringify(s.data == null ? null : s.data); } catch (e) { continue; }
+				if (cur !== prev) {
+					ST._dataSeen.set(k, cur);
+					ST._dataEdited.set(k, now);
+					try { net.send({ t: "act", k: "sdata", x: s.x, y: s.y, type: s.type, data: JSON.parse(cur) }); } catch (e) {}
+					log("CLIENT config maszyny →", k);
+				}
+			}
+			// higiena okna ochronnego
+			for (const [k, ts] of ST._dataEdited) if (now - ts > 10000) ST._dataEdited.delete(k);
+		} catch (e) {}
+	}
 
 	function subscribeGameEvents(state) {
 		if (ST._subscribedState === state || !ST.FH || !ST.FH.events) return;
@@ -739,6 +900,68 @@
 				net.send({ t: "act", k: "grabPlace", x: data.x, y: data.y, et: data.elementType });
 				grabSetLocal(state, data.x, data.y); // zablokuj ponowne celowanie w tę komórkę (patrz komentarz przy grabSetLocal)
 			});
+			// ULEPSZENIA I TECH TREE — model WSPÓLNEJ PULI (jedna fabryka = wspólne odblokowania).
+			// Zakup klienta: gra mutuje jego lokalny store i odejmuje surowce TYLKO lokalnie (za 1s host
+			// by to nadpisał = zakup darmowy i niewidoczny dla hosta — luka G2). Forward: koszt liczymy
+			// z różnicy zasobów vs ostatni snapshot hosta (event odpala się TUŻ po odjęciu).
+			const resCostDiff = () => {
+				const cost = {};
+				try {
+					const cur = state.store.resources || {};
+					const base = ST._resSnapshot || {};
+					for (const k of Object.keys(base)) {
+						const b = base[k], c = cur[k];
+						if (typeof b === "number" && typeof c === "number" && c < b) cost[k] = b - c;
+					}
+					ST._resSnapshot = Object.assign({}, cur); // re-baza (kilka zakupów w <1s liczy się poprawnie)
+				} catch (e) {}
+				return cost;
+			};
+			ST.FH.events.on(state, "upgrade:purchased", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data) return;
+				net.send({ t: "act", k: "upg", it: data.itemId, ug: data.upgradeId, lv: data.level, cost: resCostDiff() });
+				log("CLIENT upgrade →", data.itemId + "." + data.upgradeId, "lvl", data.level);
+			});
+			ST.FH.events.on(state, "tech:unlocked", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data) return;
+				net.send({ t: "act", k: "tech", id: data.techId, cost: resCostDiff() });
+				log("CLIENT tech →", data.techId);
+			});
+			// FABUŁA (fix G6): krok wyzwolony pozycją/akcją KLIENTA mutuje tylko jego lokalny storage
+			// (storyProgression.completedSteps) i po 1s host go nadpisywał. Forward → host dopisuje krok.
+			ST.FH.events.on(state, "story:stepCompleted", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data || !data.stepId) return;
+				net.send({ t: "act", k: "story", id: data.stepId });
+				log("CLIENT story step →", data.stepId);
+			});
+			// KOLEKCJE critterów (fix G6): found/available/bilety żyją w store.creatures/conservatory,
+			// nadpisywanych przez hosta — zbiór klienta cofał się w 100ms. Forward → host dolicza.
+			ST.FH.events.on(state, "entity:collected", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data || !data.typeId) return;
+				net.send({ t: "act", k: "collect", ty: data.typeId, eid: data.entityId });
+				log("CLIENT collect →", data.typeId, "(id " + data.entityId + ")");
+			});
+			// SYGNAŁY (fix G5): link/unlink klienta mutuje storage "signals" nadpisywany przez hosta →
+			// automatyka klienta znikała po 1s. Forward zmian → host wykonuje FH.signals.link/unlink.
+			ST.FH.events.on(state, "signals:userChanged", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data || !data.changes) return;
+				const ch = data.changes.map((c) => ({ a: c.action, f: c.from && { x: c.from.x, y: c.from.y }, t: c.to && { x: c.to.x, y: c.to.y } })).filter((c) => c.a && c.f && c.t);
+				if (ch.length) { net.send({ t: "act", k: "sig", ch }); log("CLIENT signals →", ch.length, "zmian"); }
+			});
+			// przycisk sygnałowy: toggle stanu przez klienta
+			ST.FH.events.on(state, "signalButton:pressed", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data || !data.structure) return;
+				const s = data.structure;
+				net.send({ t: "act", k: "sbtn", x: s.x, y: s.y, on: !!(s.data && s.data.on) });
+			});
+			// COPY-PASTE blueprintów (fix G5): wklejone struktury klienta były lokalne → reconcile je kasował
+			ST.FH.events.on(state, "structures:pasted", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data || !data.structures) return;
+				const list = data.structures.map(slimStruct);
+				let links = null;
+				try { if (data.signalLinks) links = JSON.parse(JSON.stringify(data.signalLinks)); } catch (e) {}
+				if (list.length) { net.send({ t: "act", k: "paste", list, links }); log("CLIENT paste →", list.length, "struktur"); }
+			});
 			log("Subskrypcja eventów struktur/przedmiotów aktywna");
 		} catch (e) { log("subscribe error:", e.message); }
 	}
@@ -772,9 +995,16 @@
 			const existing = SA.getAtCell(state, s.x, s.y);
 			if (existing && existing.type === s.type) {
 				if (s.data && JSON.stringify(existing.data) !== JSON.stringify(s.data)) {
-					existing.data = s.data;
-					if (SA.update) SA.update(state, existing, { propagateToWorkers: ST.net.role === "host" });
-				}
+					// KONFIG MASZYN (G5b): świeżo edytowane przez klienta data chronimy przed nadpisaniem
+					// przez snapshot hosta (act sdata jest w drodze; host potwierdzi w następnym snapie)
+					const k = structKey(s);
+					const edited = ST._dataEdited && ST._dataEdited.get(k);
+					if (!(ST.net.role === "client" && edited != null && performance.now() - edited < 6000)) {
+						existing.data = s.data;
+						if (SA.update) SA.update(state, existing, { propagateToWorkers: ST.net.role === "host" });
+						if (ST.net.role === "client") dataSeenSet(k, s.data); // baza do wykrywania edycji klienta
+					}
+				} else if (ST.net.role === "client") dataSeenSet(structKey(s), existing.data);
 				return existing;
 			}
 			const pos = force ? { x: s.x, y: s.y, clearance: CLEARANCE_AVAILABLE } : { x: s.x, y: s.y };
@@ -855,11 +1085,29 @@
 				for (const s of hostList) { buildOne(state, s, true); ST._structApplied.set(structKey(s), nowS); }
 			}
 			// worldItems: odfiltruj świeżo podniesione lokalnie (czekające na potwierdzenie hosta, TTL 10 s)
-			const now = performance.now();
-			for (const [id, ts] of ST._pickedPending) if (now - ts > 10000) ST._pickedPending.delete(id);
-			state.store.worldItems = (snap.wi || []).filter((i) => !ST._pickedPending.has(i.id));
+			applyWorldItems(state, snap.wi || []);
 		} catch (e) { log("reconcile error:", e.message); }
 		finally { ST._applyingNet = false; }
+	}
+	function applyWorldItems(state, list) {
+		const now = performance.now();
+		for (const [id, ts] of ST._pickedPending) if (now - ts > 10000) ST._pickedPending.delete(id);
+		state.store.worldItems = (list || []).filter((i) => !ST._pickedPending.has(i.id));
+	}
+	// SZYBKIE DROPY (G12): nowy przedmiot na ziemi docierał dopiero ze snapshotem 2,5s.
+	// Host: przy każdej ZMIANIE listy id wysyła ją od razu (sprawdzane 5 Hz, wysyłka tylko przy zmianie).
+	function sendWorldItemsIfChanged(state) {
+		const now = performance.now();
+		if (now - (ST._wiT || 0) < 200) return;
+		ST._wiT = now;
+		try {
+			const wi = state.store.worldItems || [];
+			let key = wi.length + ":";
+			for (let i = 0; i < wi.length; i++) key += wi[i].id + ",";
+			if (key === ST._wiKey) return;
+			ST._wiKey = key;
+			net.send({ t: "wi", wi });
+		} catch (e) {}
 	}
 
 	// ------------------------------------------------------------------
@@ -883,12 +1131,30 @@
 				st: state.store.mods || null,          // postęp fabuły (storyProgression)
 				gl: state.store.gloom || null,          // stan gloomu
 				fp: fpCounters(state),                  // liczniki procesów fabryki (ShakeWetSand itd.) — SAB nie-lustrzany
+				up: state.store.upgrades || null,       // WSPÓLNA pula ulepszeń (fix G2)
+				th: (state.store.player && state.store.player.tech) || null, // tech tree
+				pg: state.store.progression || null,    // progression (upgradesUnlocked, dungeons)
 			});
 		} catch (e) {}
 	}
 	// Liczniki "factory.processing" (SAB per-instancja, NIE objęty lustrem świata!): postęp procesów
 	// ShakeWetSand/PressBurntResidue/GrowFlowers/CondenseFlorin. Bez streamu klient widział 0 postępu
 	// ("shaking wet sand aint working" — TCentraL: proces DZIAŁAŁ na hoście, ale UI klienta martwe).
+	// Odejmij koszty zakupu klienta (wspólna pula). Sanity: tylko liczby 0..1e9, clamp do zera.
+	// Gold żyje też w SAB (shared.gold) — odejmujemy w obu miejscach, żeby UI się zgadzało.
+	function deductCosts(state, cost) {
+		if (!cost) return;
+		try {
+			const r = state.store.resources || {};
+			for (const k of Object.keys(cost)) {
+				const v = cost[k];
+				if (typeof v !== "number" || !(v > 0) || v > 1e9) continue;
+				if (typeof r[k] === "number") r[k] = Math.max(0, r[k] - v);
+				if (k === "gold") { const g = arr(state.shared.gold); if (g) g[0] = Math.max(0, g[0] - v); }
+				if (k === "energy") { const g = arr(state.shared.energy); if (g) g[0] = Math.max(0, g[0] - v); }
+			}
+		} catch (e) {}
+	}
 	function fpArr(state) { // surowa tablica SAB (do zapisu u klienta)
 		try {
 			const w = ST.FH.workers;
@@ -911,6 +1177,22 @@
 			if (msg.st) state.store.mods = msg.st;
 			if (msg.gl) state.store.gloom = msg.gl;
 			if (msg.fp) { const a = fpArr(state); if (a) { const src = msg.fp; for (let i = 0; i < Math.min(a.length, src.length); i++) { try { Atomics.store(a, i, src[i]); } catch (e) { a[i] = src[i]; } } } }
+			// wspólna pula ulepszeń/tech (fix G2): merge poziomów (NIE podmiana obiektów — gra trzyma referencje)
+			if (msg.up && state.store.upgrades) {
+				for (const it of Object.keys(msg.up)) {
+					const src = msg.up[it], dst = state.store.upgrades[it];
+					if (!src || !dst) continue;
+					for (const ug of Object.keys(src)) {
+						const s = src[ug], d = dst[ug];
+						// tylko W GÓRĘ: świeży zakup klienta nie może mrugnąć w dół zanim host przetworzy act (upgrade'y nie spadają)
+						if (s && d && typeof s.level === "number" && s.level > (d.level || 0)) { d.level = s.level; d.availableLevel = Math.max(d.availableLevel || 0, s.availableLevel != null ? s.availableLevel : s.level); }
+					}
+				}
+			}
+			if (msg.th && state.store.player && state.store.player.tech) {
+				for (const k of Object.keys(msg.th)) if (msg.th[k]) state.store.player.tech[k] = msg.th[k];
+			}
+			if (msg.pg && state.store.progression) Object.assign(state.store.progression, msg.pg);
 				ST._resSnapshot = Object.assign({}, state.store.resources); // re-baza dla przyrostów klienta (dotNine)
 		} catch (e) {}
 	}
@@ -1236,8 +1518,15 @@
 				ST._hostDemolRect = { x0: Math.floor(Math.min(start.x, end.x)), y0: Math.floor(Math.min(start.y, end.y)), x1: Math.ceil(Math.max(start.x, end.x)), y1: Math.ceil(Math.max(start.y, end.y)), t: performance.now() };
 				return false; // gra rozbiera normalnie; my tylko posprzątamy po niej
 			}
-			// rury (Pipe) idą w grze osobną funkcją — nie przechwytujemy (na razie lokalnie)
-			try { const sel = ST.FH.action && ST.FH.action.getSelected && ST.FH.action.getSelected(state); if (sel && String(sel.id).toLowerCase().indexOf("pipe") >= 0) return false; } catch (e) {}
+			// rury (Pipe): osobna ścieżka w grze (Zn) — forwardujemy rect, host woła _pipeZn (eksport z patcha)
+			try {
+				const sel = ST.FH.action && ST.FH.action.getSelected && ST.FH.action.getSelected(state);
+				if (sel && String(sel.id).toLowerCase().indexOf("pipe") >= 0) {
+					net.send({ t: "act", k: "pipeRm", x0: Math.floor(Math.min(start.x, end.x)), y0: Math.floor(Math.min(start.y, end.y)), x1: Math.ceil(Math.max(start.x, end.x)), y1: Math.ceil(Math.max(start.y, end.y)) });
+					log("CLIENT pipeRm rect");
+					return true; // pomiń lokalne (host wykona, lustro + snap potwierdzą)
+				}
+			} catch (e) {}
 			const SA = structNs(); if (!SA) { log("_demol: brak API struktur"); return false; }
 			// UWAGA: H(e) zwraca rect JUŻ W KOMÓRKACH (dzieli przez cellSize w środku — snappedMinX/cellSize).
 			// Bug 0.9.28: dzieliliśmy DRUGI raz przez 4 → skan 4x mniejszego obszaru przy originie → zawsze
@@ -1291,6 +1580,131 @@
 				ST._applyingNet = true;
 				try { for (const s of msg.list) removeOne(state, s); } finally { ST._applyingNet = false; }
 				net.send({ t: "st", k: "rm", list: msg.list });
+			} else if (msg.k === "upg") {
+				// zakup ulepszenia klienta (wspólna pula): ustaw poziom + odejmij koszt autorytatywnie
+				ST._applyingNet = true;
+				try {
+					const u = state.store.upgrades && state.store.upgrades[msg.it] && state.store.upgrades[msg.it][msg.ug];
+					if (u) {
+						if (typeof msg.lv === "number" && msg.lv > (u.level || 0)) { u.availableLevel = msg.lv; u.level = msg.lv; }
+						deductCosts(state, msg.cost);
+						try { ST.FH.events.emit(state, "upgrade:purchased", { itemId: msg.it, upgradeId: msg.ug, level: msg.lv }); } catch (e) {}
+						log("HOST: upgrade klienta", msg.it + "." + msg.ug, "→ lvl", msg.lv);
+					} else log("HOST: upgrade klienta NIEZNANY:", msg.it, msg.ug);
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "tech") {
+				ST._applyingNet = true;
+				try {
+					if (state.store.player && state.store.player.tech && !state.store.player.tech[msg.id]) {
+						state.store.player.tech[msg.id] = true;
+						deductCosts(state, msg.cost);
+						try { ST.FH.events.emit(state, "tech:unlocked", { techId: msg.id, suppressMusic: true }); } catch (e) {}
+						log("HOST: tech klienta odblokowany:", msg.id);
+					}
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "story") {
+				// krok fabuły klienta: dopisz do storyProgression.completedSteps (idempotentnie) + re-emit
+				ST._applyingNet = true;
+				try {
+					const ens = (ST.FH.storage && ST.FH.storage.ensure) || findApi("ensure", ["storage"]);
+					if (ens) {
+						const sp = ens(state, "storyProgression");
+						const arrS = sp.completedSteps || [];
+						if (!arrS.includes(msg.id)) {
+							arrS.push(msg.id); sp.completedSteps = arrS;
+							try { ST.FH.events.emit(state, "story:stepCompleted", { stepId: msg.id }); } catch (e) {}
+							log("HOST: krok fabuły klienta:", msg.id);
+						}
+					} else log("BŁĄD story: brak FH.storage.ensure");
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "collect") {
+				// zbiór crittera przez klienta: found/available + bilety za PIERWSZE złapanie (jak w grze)
+				ST._applyingNet = true;
+				try {
+					state.store.creatures = state.store.creatures || {};
+					const l = state.store.creatures;
+					l[msg.ty] = l[msg.ty] || { available: 0, found: 0 };
+					const c = l[msg.ty], first = c.found === 0;
+					c.found++; c.available++;
+					if (first) {
+						state.store.conservatory = state.store.conservatory || { tickets: 0 };
+						let types = 0; for (const k in l) if (l[k].found > 0) types++;
+						state.store.conservatory.tickets += Math.pow(2, types);
+					}
+					try { ST.FH.events.emit(state, "entity:collected", { typeId: msg.ty }); } catch (e) {}
+					// usuń encję z mapy hosta (brak oficjalnego remove — emulacja: splice z ŻYWEJ listy getAll
+					// + schowaj sprite'a getSprite + zgaś światło). Bez tego critter wisiał do 2. zbioru.
+					try {
+						const EN = ST.FH.entities;
+						if (msg.eid != null && EN && EN.getAll) {
+							const listE = EN.getAll(state);
+							const idxE = listE.findIndex((en) => en && en.id === msg.eid);
+							if (idxE >= 0) {
+								const en = listE[idxE];
+								try { if (en.lightIndex !== undefined && ST.FH.effects && ST.FH.effects.removeLight) { ST.FH.effects.removeLight(state, en.lightIndex); en.lightIndex = undefined; } } catch (e) {}
+								try { const spr = EN.getSprite && EN.getSprite(state, en.id); if (spr) { spr.renderable = false; spr.visible = false; } } catch (e) {}
+								listE.splice(idxE, 1);
+							}
+						}
+					} catch (e) {}
+					log("HOST: critter klienta zebrany:", msg.ty, first ? "(PIERWSZY — bilety!)" : "");
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "sig") {
+				// zmiany sygnałów klienta: wykonaj przez FH.signals.link/unlink (autorytatywnie)
+				ST._applyingNet = true;
+				try {
+					const SG = ST.FH.signals;
+					if (SG && SG.link && SG.unlink) {
+						for (const c of msg.ch || []) {
+							try { if (c.a === "link") SG.link(state, c.f, c.t); else if (c.a === "unlink") SG.unlink(state, c.f, c.t); } catch (e) {}
+						}
+						try { ST.FH.events.emit(state, "signals:userChanged", { changes: (msg.ch || []).map((c) => ({ action: c.a, from: c.f, to: c.t })) }); } catch (e) {}
+						log("HOST: sygnały klienta:", (msg.ch || []).length, "zmian");
+					} else log("BŁĄD sig: brak FH.signals.link/unlink — klucze:", SG ? Object.keys(SG).join(",") : "brak ns");
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "sbtn") {
+				ST._applyingNet = true;
+				try {
+					const SA2 = structNs();
+					const stc = SA2 && SA2.getAtCell(state, msg.x, msg.y);
+					if (stc) {
+						stc.data = Object.assign({}, stc.data || {}, { on: !!msg.on });
+						try { if (ST.FH.signals && ST.FH.signals.setAll) ST.FH.signals.setAll(state, { x: msg.x, y: msg.y }, !!msg.on); } catch (e) {}
+						try { ST.FH.events.emit(state, "signalButton:pressed", { structure: stc }); } catch (e) {}
+						log("HOST: przycisk sygnałowy klienta @", msg.x, msg.y, "→", msg.on);
+					}
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "paste") {
+				// wklejka blueprintu klienta: zbuduj wszystko autorytatywnie + odtwórz linki sygnałów
+				ST._applyingNet = true;
+				try {
+					let ok = 0;
+					for (const s of msg.list || []) if (buildOne(state, s, true)) ok++;
+					if (msg.links && ST.FH.signals && ST.FH.signals.link) {
+						for (const l of msg.links) { try { if (l && l.from && l.to) ST.FH.signals.link(state, l.from, l.to); } catch (e) {} }
+					}
+					net.send({ t: "st", k: "add", list: msg.list });
+					log("HOST: paste klienta —", ok + "/" + (msg.list || []).length, "struktur");
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "sdata") {
+				// konfiguracja maszyny zmieniona przez klienta (filtry/priorytety/ustawienia UI)
+				ST._applyingNet = true;
+				try {
+					const SA3 = structNs();
+					const ex = SA3 && SA3.getAtCell(state, msg.x, msg.y);
+					if (ex && ex.type === msg.type) {
+						ex.data = msg.data;
+						if (SA3.update) SA3.update(state, ex, { propagateToWorkers: true });
+						log("HOST: config maszyny od klienta:", msg.type, "@", msg.x, msg.y);
+					}
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "pipeRm") {
+				// rozbiórka rur klienta: wołamy PRAWDZIWĄ funkcję gry (Zn z modułu demolish, eksport z patcha)
+				ST._applyingNet = true;
+				try {
+					if (typeof ST._pipeZn === "function") { ST._pipeZn(state, { x: msg.x0, y: msg.y0 }, { x: msg.x1, y: msg.y1 }); log("HOST: rury klienta rozebrane w recie"); }
+					else log("BŁĄD pipeRm: brak _pipeZn (patch 'demolish module exports' nie nałożony?)");
+				} finally { ST._applyingNet = false; }
 			} else if (msg.k === "vac") {
 				hostHarvestVacuum(msg, fromId);
 			} else if (msg.k === "grabH") {
@@ -1410,6 +1824,13 @@
 			'style="width:150px;background:#111;color:#ddd;border:1px solid #555;border-radius:3px;font:11px monospace;padding:2px 4px"> ' +
 			'<button id="st-lan-go">' + t("btn_connect") + "</button>" +
 			"</div>" +
+			// czat drużynowy (host relayuje między klientami)
+			'<div id="st-chat-log" style="margin-top:4px;max-height:72px;overflow:hidden;font-size:10px;color:#cde;line-height:1.35"></div>' +
+			'<div id="st-chat-row" style="margin-top:2px">' +
+			'<input id="st-chat-in" placeholder="' + t("chat_ph") + '" maxlength="200" spellcheck="false" ' +
+			'style="width:150px;background:#111;color:#ddd;border:1px solid #555;border-radius:3px;font:11px monospace;padding:2px 4px"> ' +
+			'<button id="st-chat-send">➤</button>' +
+			"</div>" +
 			"</div>" +
 			'<div id="st-hint" style="margin-top:4px;color:#666;font-size:10px">' + t("hint") + "</div>" +
 			"</div>";
@@ -1442,6 +1863,18 @@
 		};
 		hud.querySelector("#st-lan-go").onclick = doJoinLan;
 		lanInput.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); doJoinLan(); } };
+		// CZAT: wysyłka Enterem/przyciskiem; klawisze nie przeciekają do gry (jak pole LAN)
+		const chatIn = hud.querySelector("#st-chat-in");
+		const chatSend = () => {
+			const m = (chatIn.value || "").trim();
+			if (!m || ST.net.role === "idle") return;
+			chatIn.value = "";
+			try { net.send({ t: "chat", m }); } catch (e) {}
+			addChat(t("chat_me"), m);
+		};
+		hud.querySelector("#st-chat-send").onclick = chatSend;
+		chatIn.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); chatSend(); } });
+		chatIn.addEventListener("keyup", (e) => e.stopPropagation());
 		hud.querySelector("#st-stop").onclick = () => { setClientPaused(false); net.stop(); };
 		hud.querySelector("#st-send-world").onclick = sendWorld;
 		hud.querySelector("#st-resync").onclick = () => net.send({ t: "resync" });
@@ -1897,6 +2330,7 @@
 			sendSnapshotIfDue(state);
 			sendResourcesIfDue(state);
 			sendEntitiesIfDue(state);
+			sendWorldItemsIfChanged(state); // szybkie dropy (G12)
 		}
 		// Dobijanie po rozbiórce (patrz _demol): 250ms po przeciągnięciu sprawdź, czy w recie zostały
 		// struktury pominięte przez grę (kafle utkwione w QUEUED) i zdejmij je przez SA.removeAt.
@@ -1965,6 +2399,14 @@
 			if (!ST.wsx.everApplied && !ST.wsx.mismatchLogged && ST.peers.size > 0 && now - (ST._waitHintT || 0) > 3000) {
 				ST._waitHintT = now;
 				setStatus(t("waiting_world"), "#fd5");
+			}
+			// profil klienta (G7-lite): zapis co 10s (pozycja+ekwipunek per świat hosta)
+			if (now - (ST._profT || 0) > 10000) { ST._profT = now; profileSave(state); }
+			scanDataEditsIfDue(state); // konfig maszyn edytowany przez klienta → forward (G5b)
+			// zator lustra (fix G4): działało, a od >4s nic nie przychodzi i host NIE zgłasza pauzy → pokaż ile czekamy
+			if (ST.wsx.everApplied && !ST._hostPausedShown && ST._lastWcT && now - ST._lastWcT > 4000 && now - (ST._stallHintT || 0) > 2000) {
+				ST._stallHintT = now;
+				setStatus(t("sync_stalled", Math.round((now - ST._lastWcT) / 1000)), "#fd5");
 			}
 		}
 		drawGhosts(state);

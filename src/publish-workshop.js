@@ -93,7 +93,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.35-beta — BIG two-way sync batch, everything below now works for the joining player: (1) PIPE demolition (was local-only). (2) STORY steps & objectives triggered by the joiner now count for the team (they used to revert after 1s). (3) CRITTER collection by the joiner counts (incl. first-catch conservatory tickets). (4) SIGNAL wiring (link/unlink), signal buttons and blueprint COPY-PASTE by the joiner are executed by the host — automation is no longer host-only. (5) When the HOST pauses (menu), the joiner now sees "Host paused — world frozen" instead of a silent freeze, plus a stall indicator. (6) RECONNECT: rejoining the same world no longer requires re-transferring the save. Plus 0.9.34: shared research/upgrade pool. Both players update + re-run install.bat.',
+    changeNote: 'v0.9.36-beta — PERFORMANCE: joining is now 2-4x faster. The world stream skips fully-undiscovered (fogged) chunks — on a big map that\'s most of it, and it was all being sent as black nothing; a chunk streams the moment it gets revealed. Plus LAN auto-reconnect (5 attempts every 3s with a status message) — a dropped connection heals itself instead of silently freezing. Includes the whole 0.9.34-35 batch: shared research/upgrades, pipe demolition, story/critters/signals/copy-paste by the joining player, host-pause notice, fast rejoin. Both players update + re-run install.bat.',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

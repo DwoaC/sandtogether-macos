@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.35-beta";
+	const VER = "0.9.36-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -37,6 +37,7 @@
 			offline: "offline", btn_host: "Host (Steam)", btn_invite: "Invite", btn_host_lan: "Host LAN",
 			btn_join_lan: "Join LAN", btn_connect: "Connect", btn_stop: "Stop", btn_send_world: "Send world", btn_resync: "Resync",
 			host_paused: "Host paused (menu) — world frozen, will resume automatically", sync_stalled: "No world data from host for {0}s…",
+			reconnecting: "Connection lost — reconnecting (attempt {0}/5)…",
 			btn_join_id: "Join by ID (clipboard)", lobby_copied: "Copied!",
 			clipboard_no_id: "Clipboard has no Lobby ID — first click the host's green Lobby ID line to copy it",
 			hint: "click header to hide (Ctrl+Shift+H)", by: "by " + AUTHOR + " + " + CONTRIBUTORS,
@@ -65,6 +66,7 @@
 			offline: "offline", btn_host: "Host (Steam)", btn_invite: "Zaproś", btn_host_lan: "Host LAN",
 			btn_join_lan: "Dołącz LAN", btn_connect: "Połącz", btn_stop: "Stop", btn_send_world: "Wyślij świat", btn_resync: "Resync",
 			host_paused: "Host w pauzie (menu) — świat zamrożony, wznowi się sam", sync_stalled: "Brak danych świata od hosta od {0}s…",
+			reconnecting: "Zerwane połączenie — łączę ponownie (próba {0}/5)…",
 			btn_join_id: "Dołącz po ID (schowek)", lobby_copied: "Skopiowano!",
 			clipboard_no_id: "Schowek nie zawiera Lobby ID — najpierw kliknij zieloną linię Lobby ID u hosta, żeby je skopiować",
 			hint: "kliknij nagłówek by ukryć (Ctrl+Shift+H)", by: "autor: " + AUTHOR + " + " + CONTRIBUTORS,
@@ -313,6 +315,7 @@
 				ST._fireQ = []; ST._cryoQ = []; ST._grabbedCells.clear(); ST._placedCells.clear();
 				ST._gotHostWorld = false;
 				setClientPaused(false);
+			} else if (ev.kind === "reconnecting") { setStatus(t("reconnecting", ev.attempt), "#fd5");
 			} else if (ev.kind === "version-mismatch") setStatus(t("ver_mismatch"), "#f66");
 			else if (ev.kind === "error") setStatus(t("error", ev.message), "#f66");
 		});
@@ -552,11 +555,23 @@
 			// serializacja v4: [u16 cx][u16 cy][u8 cw][u8 ch] + per-komórka: 4 map + 1 wall + 1 shadow + 1 auth + 4 cellIds + 1 elemType = 12 B
 			const parts = [];
 			let size = 0;
+			let fogSkipped = 0;
 			for (const idx of take) {
 				const ccx = idx % d.cx, ccy = Math.floor(idx / d.cx);
 				const x0 = ccx * CHUNK, y0 = ccy * CHUNK;
 				const cw = Math.min(CHUNK, W - x0), ch = Math.min(CHUNK, H - y0);
 				if (cw <= 0 || ch <= 0) continue;
+				// FOG-SKIP (optymalizacja dołączania): chunk CAŁKOWICIE nieodkryty (shadow=255 wszędzie)
+				// jest u klienta czarny — nie wysyłamy. Po odkryciu shadow się zmienia → chunk brudny → poleci.
+				// (initial fill: z 9216 chunków realnie idzie tylko odkryta część mapy — dołączanie 2-4x szybciej)
+				if (shadow) {
+					let fogged = true;
+					for (let r = 0; r < ch && fogged; r++) {
+						const src = (y0 + r) * W + x0;
+						for (let c = 0; c < cw; c++) if (shadow[src + c] !== 255) { fogged = false; break; }
+					}
+					if (fogged) { fogSkipped++; continue; }
+				}
 				const buf = new Uint8Array(6 + cw * ch * 12);
 				const dv = new DataView(buf.buffer);
 				dv.setUint16(0, ccx, true); dv.setUint16(2, ccy, true);
@@ -584,11 +599,12 @@
 			net.send({ t: "wc", v: 4, wid: state.store.meta && state.store.meta.worldId, scene: state.store.scene && state.store.scene.active, W, H, n: parts.length, d: b64enc(packed) });
 			// statystyki
 			w.applyBytes += packed.length; w.applyCount += parts.length;
+			w.fogSkipped = (w.fogSkipped || 0) + fogSkipped;
 			if (now - w.statT > 2000) {
 				const info = t("sync_up", Math.round(w.applyBytes / 2048), Math.round(w.applyCount / 2), w.pending.size);
 				setSyncInfo(info);
-				log("SYNC-HOST", info);
-				w.applyBytes = 0; w.applyCount = 0; w.statT = now;
+				log("SYNC-HOST", info, w.fogSkipped ? "(fog-skip: " + w.fogSkipped + ")" : "");
+				w.applyBytes = 0; w.applyCount = 0; w.statT = now; w.fogSkipped = 0;
 			}
 		} catch (e) { log("batch error:", e.message); }
 		w.busy = false;

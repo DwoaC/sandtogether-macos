@@ -128,9 +128,10 @@ function startWsServer(port) {
   S.wsServer.listen(port, () => emitEvent('hosting', { transport: 'ws', port }));
 }
 
-function joinWs(host, port) {
+function joinWs(host, port, _retry) {
   stopNetworking('restart');
   S.role = 'client'; S.transport = 'ws';
+  const retryCount = _retry || 0;
   const key = crypto.randomBytes(16).toString('base64');
   const sock = net.connect(port, host, () => {
     sock.write('GET / HTTP/1.1\r\nHost: ' + host + ':' + port + '\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ' + key + '\r\nSec-WebSocket-Version: 13\r\n\r\n');
@@ -153,7 +154,23 @@ function joinWs(host, port) {
     emitEvent('joined', { transport: 'ws', host, port });
     netSend({ t: 'hello', nick: S.myNick, ver: PROTO_VER });
   });
-  sock.on('close', () => { S.peers.delete('host'); emitEvent('peer-disconnected', { id: 'host' }); });
+  sock.on('close', () => {
+    S.peers.delete('host');
+    emitEvent('peer-disconnected', { id: 'host' });
+    // AUTO-RECONNECT (LAN): zerwane łącze wskrzeszamy co 3s. Licznik prób jedzie przez parametr _retry
+    // (przetrwa kolejne sockety!). Udany handshake = stabilne łącze → przyszłe zerwanie znów ma 5 prób.
+    // Stop usera / inne połączenie w międzyczasie przerywa (role/transport/peers check).
+    if (S.role === 'client' && S.transport === 'ws' && S.wsClient === sock) {
+      const next = upgraded ? 1 : retryCount + 1; // po stabilnym łączu licz od 1; po nieudanej próbie +1
+      if (next > 5) { emitEvent('error', { where: 'ws-join', message: 'reconnect failed after 5 tries' }); return; }
+      setTimeout(() => {
+        if (S.role !== 'client' || S.transport !== 'ws' || S.peers.size > 0) return;
+        log('WS reconnect próba', next, '/5 →', host + ':' + port);
+        emitEvent('reconnecting', { transport: 'ws', attempt: next });
+        try { joinWs(host, port, next); } catch (e) {}
+      }, 3000);
+    }
+  });
   sock.on('error', (e) => emitEvent('error', { where: 'ws-join', message: e.message }));
 }
 

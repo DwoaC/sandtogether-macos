@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.8-beta";
+	const VER = "0.9.26-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -106,6 +106,7 @@
 		// world sync
 		wsx: {
 			pending: new Set(),   // host: indeksy chunków do wysłania
+			priority: new Set(),  // host: chunki grabber/vacuum — ZAWSZE wysyłane najpierw (omija limit 120 fast-lane)
 			sweep: 0,             // host: rolling pełny sweep
 			lastBatch: 0,
 			busy: false,
@@ -174,10 +175,18 @@
 		// (FH.player.isPositionClear -> isCellTerrain -> getCellId). Bez jej sync klient WIDZI wykopany
 		// teren, ale fizycznie wciąż jest "solidny". Sync = klient może wejść w dziurę. (wkład dotNine)
 		const sim = sh.sim && sh.sim.cellIds;
+		// elementData.type: mapuje INDEKS elementu → typ. Grabber/vacuum czytają go przez getResolvedTypeFromCellId
+		// (cellId→index→type). Lustro synchronizuje cellIds ale NIE elementData → klient nie rozpoznaje elementów
+		// (grabber nie bierze). Sync tej warstwy (v4) naprawia grabbera. index = cellId - ELEMENTS_MIN.
+		const etype = (sh.sim && sh.sim.elementData && sh.sim.elementData.type) || null;
 		const W = (sh.mapData && sh.mapData.width) || (state.store.world && state.store.world.size && state.store.world.size.width) || 0;
 		const H = (sh.mapData && sh.mapData.height) || (state.store.world && state.store.world.size && state.store.world.size.height) || (map && W ? map.length / 4 / W : 0);
-		return { map, wall, shadow, auth, sim, W, H };
+		return { map, wall, shadow, auth, sim, etype, W, H };
 	}
+	const ELEMENTS_MIN = 1000001, ELEMENTS_MAX = 2000000; // zakres cellId dla elementów (Lk.ELEMENTS w buildzie 0.5.4)
+	// Prawidłowy typ elementu do sieci: liczba całkowita > 0. Odsiewa null/undefined/0 (pusty slot tanku,
+	// T[o+2] hors-bornes u zdesynchronizowanego klienta) — inaczej host robi createAt(...,undefined) i się wywala.
+	const validElement = (v) => Number.isInteger(v) && v > 0;
 	// Grabber (klient): wyzeruj cellId komórki lokalnie i zapamiętaj ją, żeby grabber nie wziął jej ponownie
 	// zanim host potwierdzi usunięcie przez lustro. Wołane tylko po stronie klienta (renderujący lustro).
 	function grabClearLocal(state, x, y) {
@@ -185,8 +194,12 @@
 			const { sim, W, H } = worldBuffers(state);
 			if (!sim || !W || x < 0 || y < 0 || x >= W || y >= H) return;
 			const idx = x + y * W;
-			new Uint32Array(sim.buffer, sim.byteOffset, W * H)[idx] = 0;
-			ST._grabbedCells.set(idx, performance.now());
+			const sim32 = new Uint32Array(sim.buffer, sim.byteOffset, W * H);
+			const cid = sim32[idx]; // cellId zgrabowanego elementu — do rozróżnienia "ten sam" vs "nowy element wpadł"
+			sim32[idx] = 0;
+			ST._placedCells.delete(idx); // GRAB kasuje ewentualny sentinel PLACE tej samej komórki (inaczej mapy się biją → blokada re-grab)
+			ST._grabbedCells.set(idx, { ts: performance.now(), cid });
+			if ((ST._grabDiag = (ST._grabDiag || 0) + 1) <= 60) log("GRAB pick @", x, y, "(cellId->0, forward)");
 		} catch (e) {}
 	}
 	// Grabber PLACE (klient): wpisz sentinel (niezerowy cellId) do komórki, w którą odłożyliśmy element —
@@ -200,7 +213,9 @@
 			if (!sim || !W || x < 0 || y < 0 || x >= W || y >= H) return;
 			const idx = x + y * W;
 			new Uint32Array(sim.buffer, sim.byteOffset, W * H)[idx] = GRAB_SENTINEL;
+			ST._grabbedCells.delete(idx); // PLACE kasuje ewentualny znacznik GRAB tej samej komórki
 			ST._placedCells.set(idx, performance.now());
+			if ((ST._grabDiag = (ST._grabDiag || 0) + 1) <= 60) log("GRAB place @", x, y, "(sentinel, forward)");
 		} catch (e) {}
 	}
 	// Adaptacyjny okres ochronny lustra: 3×RTT+300ms (min 1200, max 3000) — przy pingu 300ms+
@@ -318,6 +333,11 @@
 			if (msg.facing === 1 || msg.facing === -1) p.syncedFacing = msg.facing;
 			p.aim = typeof msg.aim === "number" ? msg.aim : 0;
 			p.trailAlpha = typeof msg.trail === "number" ? msg.trail : 0;
+			// preview akcji (fantom pozy / reticle grabbera) — kursor w świecie + intencja budowy
+			p.mwx = typeof msg.mwx === "number" ? msg.mwx : null;
+			p.mwy = typeof msg.mwy === "number" ? msg.mwy : null;
+			p.bt = msg.bt != null ? msg.bt : null;
+			p.boffs = Array.isArray(msg.boffs) ? msg.boffs : null;
 			if (p.x === 0 && p.y === 0) { p.x = msg.x; p.y = msg.y; }
 		} else if (msg.t === "hello") {
 			const p = ST.peers.get(from) || { x: 0, y: 0, tx: 0, ty: 0, lastSeen: performance.now() };
@@ -361,9 +381,12 @@
 			playRemoteSound(msg);
 		} else if (msg.t === "vacres") {
 			if (ST.net.role === "client") clientFillTanks(msg.types || []);
+		} else if (msg.t === "grabres") {
+			if (ST.net.role === "client") clientFillGrabTank(msg.types || []);
 		} else if (msg.t === "resync") {
 			if (ST.net.role === "host") { enqueueFullWorld(); ST._lastSnap = 0; }
 		} else if (msg.t === "world-begin") {
+			ST._gotHostWorld = true; // otrzymaliśmy świat OD hosta → ufamy jego worldId gdy oboje w grze (patrz applyWorldBatch)
 			ST._worldRx = { name: msg.name, total: msg.chunks, parts: new Array(msg.chunks), got: 0, from, done: false, ended: false };
 			setStatus(t("receiving", 0, msg.chunks), "#ff5");
 			scheduleRxCheck();
@@ -435,6 +458,23 @@
 	// ------------------------------------------------------------------
 	function chunkDims(W, H) { return { cx: Math.ceil(W / CHUNK), cy: Math.ceil(H / CHUNK) }; }
 
+	// HOST: oznacz chunk komórki (x,y) jako "brudny" do wysyłki lustrem. KLUCZOWE dla grabbera/vacuum:
+	// FH.elements.createAt/removeAt z moda NIE zawsze ustawia chunkShouldUpdate → miroir pomija chunk →
+	// klient nigdy nie dostaje odłożonego elementu (aż host znów ruszy tę strefę). Wymuszamy wysyłkę tu.
+	function markCellDirty(state, x, y) {
+		try {
+			if (ST.net.role !== "host") return;
+			const { W, H } = worldBuffers(state);
+			if (!W || x < 0 || y < 0 || x >= W || y >= H) return;
+			const d = chunkDims(W, H);
+			const cx = Math.floor(x / CHUNK), cy = Math.floor(y / CHUNK);
+			for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { // + sąsiedzi (element może wpłynąć na krawędź)
+				const nx = cx + dx, ny = cy + dy;
+				if (nx >= 0 && ny >= 0 && nx < d.cx && ny < d.cy) { const ci = nx + ny * d.cx; ST.wsx.pending.add(ci); ST.wsx.priority.add(ci); } // priorytet: dostawa natychmiastowa (re-grab)
+			}
+		} catch (e) {}
+	}
+
 	function enqueueFullWorld() {
 		if (!ST.state) return;
 		const { W, H } = worldBuffers(ST.state);
@@ -457,8 +497,9 @@
 		const w = ST.wsx;
 		const now = performance.now();
 		if (w.busy || now - w.lastBatch < 100) return;
-		const { map, wall, shadow, auth, sim, W, H } = worldBuffers(state);
+		const { map, wall, shadow, auth, sim, etype, W, H } = worldBuffers(state);
 		if (!map || !W) return;
+		const cellIds32 = sim ? new Uint32Array(sim.buffer, sim.byteOffset, W * H) : null; // do odczytu typu elementu per komórka (v4)
 		const d = chunkDims(W, H);
 		const total = d.cx * d.cy;
 		// rolling sweep — samonaprawa przeoczonych chunków (4 na batch)
@@ -482,9 +523,12 @@
 				else far.push(a);
 			}
 			const slowN = w.pending.size > 3000 ? 40 : 20;
-			const take = near.concat(far.slice(0, slowN));
+			// PRIORYTET najpierw (grabber/vacuum) — ZAWSZE wysyłane, omijają limit near/far (fix "re-grab: miroir ne livre pas").
+			const prio = w.priority.size ? [...w.priority] : [];
+			w.priority.clear();
+			const take = prio.concat(near.filter((i) => !prio.includes(i)), far.slice(0, slowN).filter((i) => !prio.includes(i)));
 			for (const i of take) w.pending.delete(i);
-			// serializacja v3: [u16 cx][u16 cy][u8 cw][u8 ch] + per-komórka: 4 map + 1 wall + 1 shadow + 1 auth + 4 sim.cellIds = 11 B
+			// serializacja v4: [u16 cx][u16 cy][u8 cw][u8 ch] + per-komórka: 4 map + 1 wall + 1 shadow + 1 auth + 4 cellIds + 1 elemType = 12 B
 			const parts = [];
 			let size = 0;
 			for (const idx of take) {
@@ -492,7 +536,7 @@
 				const x0 = ccx * CHUNK, y0 = ccy * CHUNK;
 				const cw = Math.min(CHUNK, W - x0), ch = Math.min(CHUNK, H - y0);
 				if (cw <= 0 || ch <= 0) continue;
-				const buf = new Uint8Array(6 + cw * ch * 11);
+				const buf = new Uint8Array(6 + cw * ch * 12);
 				const dv = new DataView(buf.buffer);
 				dv.setUint16(0, ccx, true); dv.setUint16(2, ccy, true);
 				buf[4] = cw; buf[5] = ch;
@@ -502,6 +546,8 @@
 				for (let r = 0; r < ch; r++) { const src = (y0 + r) * W + x0; if (shadow) buf.set(shadow.subarray(src, src + cw), o); o += cw; }
 				for (let r = 0; r < ch; r++) { const src = (y0 + r) * W + x0; if (auth) buf.set(auth.subarray(src, src + cw), o); o += cw; }
 				for (let r = 0; r < ch; r++) { const src = (y0 + r) * W + x0; if (sim) buf.set(new Uint8Array(sim.buffer, sim.byteOffset + src * 4, cw * 4), o); o += cw * 4; }
+				// warstwa typu elementu (1 B/komórkę): cellId∈[MIN,MAX] → etype[cellId-MIN], inaczej 0. Naprawia grabbera u klienta.
+				for (let r = 0; r < ch; r++) { for (let cc = 0; cc < cw; cc++) { let ty = 0; if (cellIds32 && etype) { const cid = cellIds32[(y0 + r) * W + x0 + cc]; if (cid >= ELEMENTS_MIN && cid <= ELEMENTS_MAX) ty = etype[cid - ELEMENTS_MIN] || 0; } buf[o++] = ty & 0xff; } }
 				// hash-skip: identyczna zawartość jak przy ostatniej wysyłce → nie wysyłaj (FNV-1a nad bajtami chunka)
 				let hh = 0x811c9dc5;
 				for (let i = 6; i < buf.length; i++) { hh ^= buf[i]; hh = (hh * 0x01000193) >>> 0; }
@@ -514,7 +560,7 @@
 			const all = new Uint8Array(size);
 			let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
 			const packed = await deflate(all);
-			net.send({ t: "wc", v: 3, wid: state.store.meta && state.store.meta.worldId, scene: state.store.scene && state.store.scene.active, W, H, n: parts.length, d: b64enc(packed) });
+			net.send({ t: "wc", v: 4, wid: state.store.meta && state.store.meta.worldId, scene: state.store.scene && state.store.scene.active, W, H, n: parts.length, d: b64enc(packed) });
 			// statystyki
 			w.applyBytes += packed.length; w.applyCount += parts.length;
 			if (now - w.statT > 2000) {
@@ -547,9 +593,12 @@
 		// wyjątek: oba w menu (scene 1) = tryb testowy lustra, mimo różnych worldId
 		const menuTest = msg.scene === 1 && myScene === 1;
 		if (msg.wid && myWid && msg.wid !== myWid && !menuTest) {
-			// Zaufanie po auto-load: silnik mógł nadać wczytanemu światu inny lokalny worldId niż host
-			// używa w "wc", mimo że to DOKŁADNIE ten sam save. Ufamy temu wid i zapamiętujemy na sesję. (dotNine)
-			const trusting = ST._trustedWid === msg.wid || (ST._pendingTrustUntil && performance.now() < ST._pendingTrustUntil);
+			// Zaufanie: silnik nadaje wczytanemu światu INNY lokalny worldId niż host używa w "wc", mimo że to
+			// DOKŁADNIE ten sam save (fix "REJECT world" → miroir rejeté → reconcile kasował struktury klienta).
+			// Ufamy gdy: (a) już zaufany, (b) okno po auto-load, LUB (c) dostaliśmy świat OD tego hosta (world-begin)
+			// i OBOJE jesteśmy w grze (scene≠1) — czyli klient faktycznie wczytał save hosta (auto- lub ręcznie).
+			const bothInWorld = msg.scene !== 1 && myScene !== 1;
+			const trusting = ST._trustedWid === msg.wid || (ST._pendingTrustUntil && performance.now() < ST._pendingTrustUntil) || (ST._gotHostWorld && bothInWorld);
 			if (!trusting) {
 				setStatus(t("other_world"), "#f66");
 				if (!ST.wsx.mismatchLogged) { ST.wsx.mismatchLogged = true; log("REJECT world: worldId host=" + msg.wid + " me=" + myWid + " scene h/c=" + msg.scene + "/" + myScene); }
@@ -564,11 +613,12 @@
 			if (!ST.wsx.mismatchLogged) { ST.wsx.mismatchLogged = true; log("REJECT world: dims host=" + msg.W + "x" + msg.H + " me=" + W + "x" + H + " map=" + (!!map)); }
 			return;
 		}
-		if (msg.v !== 3) { setStatus(t("ver_mismatch"), "#f66"); return; } // v3 = doszła warstwa sim.cellIds (kolizja)
+		if (msg.v !== 4) { setStatus(t("ver_mismatch"), "#f66"); return; } // v4 = doszła warstwa elementData.type (grabber)
 		if (ST.wsx.mismatchLogged) { ST.wsx.mismatchLogged = false; log("World MATCH — lustro rusza"); }
 		ST.wsx.mismatchWarned = false;
 		setClientPaused(true);
-		const { auth, sim } = worldBuffers(state);
+		const { auth, sim, etype } = worldBuffers(state);
+		const cellIds32 = sim ? new Uint32Array(sim.buffer, sim.byteOffset, W * H) : null;
 		const raw = await inflate(b64dec(msg.d));
 		const dv = new DataView(raw.buffer);
 		let o = 0, applied = 0;
@@ -577,12 +627,14 @@
 			const cw = raw[o + 4], ch = raw[o + 5];
 			o += 6;
 			const x0 = ccx * CHUNK, y0 = ccy * CHUNK;
-			if (o + cw * ch * 11 > raw.length) break; // uszkodzony batch
+			if (o + cw * ch * 12 > raw.length) break; // uszkodzony batch
 			for (let r = 0; r < ch; r++) { const dst = ((y0 + r) * W + x0) * 4; map.set(raw.subarray(o, o + cw * 4), dst); o += cw * 4; }
 			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; wall.set(raw.subarray(o, o + cw), dst); o += cw; }
 			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; if (shadow) shadow.set(raw.subarray(o, o + cw), dst); o += cw; }
 			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; if (auth) auth.set(raw.subarray(o, o + cw), dst); o += cw; }
 			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; if (sim) new Uint8Array(sim.buffer, sim.byteOffset + dst * 4, cw * 4).set(raw.subarray(o, o + cw * 4)); o += cw * 4; }
+			// warstwa typu elementu: wpisz do elementData.type[cellId-MIN] żeby getResolvedTypeFromCellId działało (grabber)
+			for (let r = 0; r < ch; r++) { for (let cc = 0; cc < cw; cc++) { const ty = raw[o++]; if (etype && cellIds32) { const cid = cellIds32[(y0 + r) * W + x0 + cc]; if (cid >= ELEMENTS_MIN && cid <= ELEMENTS_MAX) etype[cid - ELEMENTS_MIN] = ty; } } }
 			applied++;
 		}
 		// Ochrona grabbera: lustro mogło przynieść STARĄ zawartość komórki (host jeszcze nie przetworzył
@@ -591,15 +643,21 @@
 		if (sim && (ST._grabbedCells.size || ST._placedCells.size)) {
 			const tNow = performance.now(), grace = grabGraceMs();
 			const sim32 = new Uint32Array(sim.buffer, sim.byteOffset, W * H);
-			for (const [idx, ts] of ST._grabbedCells) {
-				if (tNow - ts > grace) { ST._grabbedCells.delete(idx); continue; } // host miał czas — oddaj kontrolę
-				if (sim32[idx] === 0) ST._grabbedCells.delete(idx); // host potwierdził usunięcie
-				else sim32[idx] = 0; // host jeszcze nie zdążył — trzymaj pusto
+			for (const [idx, o] of ST._grabbedCells) {
+				if (tNow - o.ts > grace) { ST._grabbedCells.delete(idx); continue; } // host miał czas — oddaj kontrolę
+				const v = sim32[idx];
+				// FIX "2-3 puis stop": relâche dès qu'un NOUVEL élément (≠ celui grabbé) apparaît — c'est un élément
+				// TOMBÉ d'au-dessus dans la cellule grabbée, il doit être grabbable. Avant: on forçait 0 aveuglément
+				// (v!==0 → 0) pendant 1200ms → le tas qui s'effondre était masqué → impossible de grabber la suite.
+				if (v !== 0 && v !== o.cid) ST._grabbedCells.delete(idx); // nowy element wpadł → oddaj (grabbable)
+				else sim32[idx] = 0; // wciąż stary element (o.cid) albo pusto → trzymaj pusto (anty-duplikat)
 			}
 			for (const [idx, ts] of ST._placedCells) {
-				if (tNow - ts > grace) { ST._placedCells.delete(idx); continue; }
-				if (sim32[idx] !== 0) ST._placedCells.delete(idx); // host potwierdził zawartość (prawdziwy id nadpisał sentinel)
-				else sim32[idx] = GRAB_SENTINEL; // host jeszcze nie zdążył — trzymaj "zajęte"
+				if (tNow - ts > grace) { if ((ST._grabDiag2 = (ST._grabDiag2 || 0) + 1) <= 60) log("GRAB place TIMEOUT @idx", idx, "po", Math.round(tNow - ts), "ms — miroir n'a jamais confirmé l'élément (tombé/perdu?), cellId lustra=" + sim32[idx]); ST._placedCells.delete(idx); continue; }
+				// FIX re-grab: relâcher SEULEMENT si un VRAI élément est arrivé (cellId∈[MIN,MAX]). Avant: sim32!==0
+				// relâchait sur notre PROPRE sentinel (=1) → la cellule restait à 1 (pas grabbable) → re-grab impossible.
+				if (sim32[idx] >= ELEMENTS_MIN && sim32[idx] <= ELEMENTS_MAX) { if ((ST._grabDiag2 = (ST._grabDiag2 || 0) + 1) <= 60) log("GRAB place CONFIRMÉ @idx", idx, "po", Math.round(tNow - ts), "ms, vrai cellId=" + sim32[idx], "→ re-grab OK"); ST._placedCells.delete(idx); }
+				else sim32[idx] = GRAB_SENTINEL; // pas encore de vrai élément (0 ou sentinel) → garde "zajęte"
 			}
 		}
 		const w = ST.wsx;
@@ -624,16 +682,10 @@
 		if (ST._subscribedState === state || !ST.FH || !ST.FH.events) return;
 		ST._subscribedState = state;
 		try {
-			// KLIENT: przechwyć stawianie ZANIM cokolwiek zapisze do świata (building:place
-			// jest anulowalny — zwrot true = czysty no-op, zero zapisu komórek/mapData).
-			// Wysyłamy intencję do hosta; host stawia autorytatywnie i odsyła potwierdzenie.
-			ST.FH.events.on(state, "building:place", (st, data) => {
-				if (ST.net.role !== "client" || ST._applyingNet) return false; // host albo aplikacja z sieci: pozwól
-				if (!data || typeof data.structureId !== "string") return false;
-				if ((ST._plDiag2 = (ST._plDiag2 || 0) + 1) <= 5) log("CLIENT forward place:", data.structureId, "@", data.x, data.y);
-				net.send({ t: "act", k: "place", type: data.structureId, x: data.x, y: data.y });
-				return true; // anuluj lokalne stawianie — klient nic nie pisze do świata
-			});
+			// KLIENT: stawianie przechwytujemy patchem bundle (_place) — od update'u gry 2026-08-17
+			// "building:place" to formalny INTERCEPTOR (FH.hooks.intercept + ctrl.cancel() + {structureTypes}),
+			// a nie anulowalny event (return true już NIE anuluje) → stary events.on tu nie działał
+			// = klient nie mógł postawić NICZEGO. Patch _place bierze intencję u źródła (patrz ST._place).
 			ST.FH.events.on(state, "structures:placed", (st, data) => {
 				// tylko HOST rozgłasza własne postawienia; klient już nie (anuluje przed zapisem)
 				if (ST._applyingNet || ST.net.role !== "host") return;
@@ -664,7 +716,10 @@
 			// Grabber/chwytak: klient forwarduje pobranie/odłożenie elementu → host wykonuje autorytatywnie
 			// przez FH.elements.removeAt/createAt (bez patchowania bundle). Rozwiązuje "grabber nie bierze wet sand". (dotNine)
 			ST.FH.events.on(state, "grabber:elementPickedUp", (st, data) => {
+				// DIAG inconditionnel: le pick fire-t-il côté client, avec quel elementType ?
+				if ((ST._pickDiag = (ST._pickDiag || 0) + 1) <= 80) log("GRAB pickEvent fired: role=" + ST.net.role, "et=" + (data && data.elementType), "@", data && data.x, data && data.y, "applyingNet=" + ST._applyingNet);
 				if (ST._applyingNet || ST.net.role !== "client" || !data) return;
+				if (!validElement(data.elementType)) { if ((ST._pickDiag3 = (ST._pickDiag3 || 0) + 1) <= 20) log("GRAB pick REJETÉ: elementType invalide =", data.elementType); return; }
 				net.send({ t: "act", k: "grabPick", x: data.x, y: data.y, et: data.elementType });
 				// KLUCZ: usuwamy komórkę lokalnie OD RAZU. Zapis grabbera do świata idzie przez odroczoną
 				// kolejkę Lu, która u zapauzowanego klienta NIE wykonuje się → komórka "zostaje", więc grabber
@@ -675,6 +730,10 @@
 			});
 			ST.FH.events.on(state, "grabber:elementPlaced", (st, data) => {
 				if (ST._applyingNet || ST.net.role !== "client" || !data) return;
+				// Reszta ODŁOŻENIA z pustego/hors-bornes slotu tanku (T[o+2] undefined u zdesync. klienta):
+				// elementType == null/0 → JSON gubi pole → host createAt(...,undefined) = crash "reading 'type'"
+				// + "element utracony" (912×/sesję w logach). Forwardujemy TYLKO prawdziwe typy elementów.
+				if (!validElement(data.elementType)) return;
 				net.send({ t: "act", k: "grabPlace", x: data.x, y: data.y, et: data.elementType });
 				grabSetLocal(state, data.x, data.y); // zablokuj ponowne celowanie w tę komórkę (patrz komentarz przy grabSetLocal)
 			});
@@ -699,9 +758,12 @@
 		if (!ST._structNsWarned) { ST._structNsWarned = true; log("BŁĄD: nie znalazłem API struktur (build/removeAt/getAtCell) w FH:", Object.keys(FH).join(",")); }
 		return null;
 	}
-	// force=true (klient renderujący potwierdzoną strukturę): pomija kontrolę kolizji
-	// (clearance:-1 nie równa się żadnej wartości enuma Blocked → Q nie odrzuci). Zapis komórek
-	// i tak pomija hook _setCell na kliencie, więc to tylko dodanie sprite'a do store+cache.
+	// force=true (host stawiający intencję klienta / klient renderujący potwierdzenie): pomija kontrolę
+	// kolizji podając JAWNIE clearance = Available (posad zbudowany, niebloowany). WAŻNE (0.5.4): dawny
+	// hack clearance:-1 zapisywał NIEPRAWIDŁOWĄ wartość enuma J6 na strukturze → gra traktowała ją jak
+	// uszkodzoną/zablokowaną i USUWAŁA ("pose supprimée directement"). J6.Available=1 (Blocked=2/3) → build
+	// przechodzi checki (≠FullyBlocked/≠PartiallyBlocked) i struktura jest POPRAWNA → nie znika.
+	const CLEARANCE_AVAILABLE = 1; // J6.Available w buildzie 0.5.4 (patrz enum: Available=1,FullyBlocked=2,PartiallyBlocked=3,CanBeReplaced=4)
 	function buildOne(state, s, force) {
 		try {
 			const SA = structNs(); if (!SA) return null;
@@ -713,9 +775,16 @@
 				}
 				return existing;
 			}
-			const pos = force ? { x: s.x, y: s.y, clearance: -1 } : { x: s.x, y: s.y };
+			const pos = force ? { x: s.x, y: s.y, clearance: CLEARANCE_AVAILABLE } : { x: s.x, y: s.y };
 			const built = SA.build(state, pos, s.type, {});
-			if (built && s.data) { built.data = s.data; if (SA.update) SA.update(state, built, { propagateToWorkers: ST.net.role === "host" }); }
+			if (built) {
+				if (s.data) built.data = s.data;
+				// HOST: ZAWSZE propaguj strukturę do workerów symulacji (nie tylko gdy jest data!). Bez tego
+				// struktura jest w store, ale działająca sim hosta jej "nie zna" → NIE renderuje się u hosta
+				// (klient z sim w PAUZIE i tak ją rysuje ze store — stąd "klient widzi, host nie widzi").
+				// (fix 0.5.4: pose du client invisible côté hôte)
+				if (SA.update && (ST.net.role === "host" || s.data)) SA.update(state, built, { propagateToWorkers: ST.net.role === "host" });
+			}
 			return built;
 		} catch (e) { log("buildOne error:", s.type, e.message); return null; }
 	}
@@ -760,14 +829,14 @@
 			const nowS = performance.now();
 			for (const [hostList, localList] of [[snap.s, state.store.structures || []], [snap.p, state.store.pipes || []]]) {
 				const hostMap = new Map(hostList.map((s) => [structKey(s), s]));
-				// usuń lokalne, których host nie ma — ALE z okresem ochronnym: nie kasuj struktur
-				// postawionych w ostatnich 6 s (host mógł jeszcze nie ująć ich w snapshotcie / drobny
-				// rozjazd klucza pozycji przez offset struktury). Chroni przed "auto-delete". (fix TCentraL)
-				for (const s of [...localList]) {
-					if (hostMap.has(structKey(s))) continue;
-					if (nowS - (ST._structApplied.get(structKey(s)) || 0) < 6000) continue;
-					removeOne(state, s);
-				}
+				// RECONCILE ADDITIF (fix majeur): NIE usuwamy już lokalnych struktur na podstawie NIEOBECNOŚCI
+				// w snapshotcie. To kasowało pozy gracza (drobny rozjazd klucza pozycji / host chwilowo bez nich
+				// w JSON-ie / typy stawiane inną ścieżką niż building:place) → "batiment se pose puis disparaît".
+				// Prawdziwe usunięcia i tak przychodzą jawnym kanałem "st rm"/"st mv"/demolish. Rozjazdy czyści Resync.
+				// (Diagnostyka: policz ile struktur host snapshot NIE zawiera — bez kasowania.)
+				let _absent = 0;
+				for (const s of localList) if (!hostMap.has(structKey(s))) _absent++;
+				if (_absent && (ST._rmDiag = (ST._rmDiag || 0) + 1) <= 20) log("RECONCILE: host snapshot nie ma", _absent, "lokalnych struktur (NIE kasuję — additif); snapshot ma", hostList.length);
 				// dobuduj/zaktualizuj brakujące (klient: force=true — render bez kontroli kolizji/zapisu komórek)
 				for (const s of hostList) { buildOne(state, s, true); ST._structApplied.set(structKey(s), nowS); }
 			}
@@ -935,6 +1004,73 @@
 		return true; // pomiń lokalny tick (czyta nieaktualne cellIds)
 	};
 
+	// GRABBER host-side (model vacuum, v1): przy PICK (tank pusty) klient NIE zbiera lokalnie — forwarduje tylko
+	// WIZ (mouse.cellPosition), host zbiera autorytatywnie (getInfoAtPos+isGrabbable+removeAt) i odsyła typy,
+	// klient wypełnia tank. Omija cały wyścig sentineli/lustra pod obciążeniem (1024 komórki). PLACE (tank>0)
+	// zostaje po staremu (return false → lokalne odkładanie działa, host createAt potwierdza).
+	ST._grab = (state, tool) => {
+		try {
+			if (!isClientSync() || !ST.wsx.paused) return false; // host/offline lub klient poza światem hosta
+			const B = tool && tool.data && tool.data.matrix;
+			if (!B) return false;
+			if (B[1] > 0) return false; // tank ma zawartość → tryb PLACE → nie przechwytuj (odkładanie działa)
+			// KLUCZ: zbieraj TYLKO gdy gracz aktywnie grabuje (trzyma przycisk) → action.state[qy.Active=2].
+			// Bez tego forwardowaliśmy w kółko i grabber "brał" bez klikania (element od razu spadał). (fix user)
+			const ast = state.session && state.session.action && state.session.action.state;
+			if (!ast || !ast[2]) return false; // brak akcji → pozwól z() zrobić hover (bez pobierania)
+			const now = performance.now();
+			if (now - (ST._lastGrabH || 0) > 100) {
+				ST._lastGrabH = now;
+				const m = state.session && state.session.input && state.session.input.mouse;
+				const cp = m && m.cellPosition;
+				if (cp && cp.x >= 0 && cp.y >= 0) {
+					ST._grabTool = tool; // zapamiętaj do wypełnienia tanku po odpowiedzi hosta
+					try { net.send({ t: "act", k: "grabH", x: cp.x | 0, y: cp.y | 0 }); } catch (e) {}
+					if ((ST._grabHDiag = (ST._grabHDiag || 0) + 1) <= 40) log("CLIENT grabH forward @", cp.x | 0, cp.y | 0);
+				}
+			}
+			return true; // pomiń lokalne zbieranie (host zrobi to autorytatywnie)
+		} catch (e) { return false; }
+	};
+	// HOST: zbierz grabbable elementy w promieniu wokół (x,y), usuń, odeślij typy klientowi (jak vacuum).
+	function hostHarvestGrab(msg, fromId) {
+		const state = ST.state;
+		if (!state || !ST.FH) return;
+		const el = ST.FH.elements || {};
+		const getInfo = el.getInfoAtPos;
+		const removeAt = el.removeAt;
+		if (!getInfo || !removeAt) { if (!ST._grabApiWarned) { ST._grabApiWarned = true; log("BŁĄD grabH: brak getInfoAtPos/removeAt — el:", Object.keys(el).join(",")); } return; }
+		const types = [];
+		const R = 4; let taken = 0;
+		for (let dy = -R; dy <= R && taken < 48; dy++)
+			for (let dx = -R; dx <= R && taken < 48; dx++) {
+				const x = msg.x + dx, y = msg.y + dy;
+				try {
+					const info = getInfo(state, x, y);
+					if (!info || !info.elementType) continue;
+					if (info.isGrabbable === false) continue; // szanuj flagę gdy jest; gdy brak — bierz (klient celował)
+					removeAt(state, x, y);
+					markCellDirty(state, x, y);
+					types.push(info.elementType);
+					taken++;
+				} catch (e) {}
+			}
+		if (types.length) { net.send({ t: "grabres", types }, fromId); if ((ST._grabHostDiag = (ST._grabHostDiag || 0) + 1) <= 40) log("HOST grabH @", msg.x, msg.y, "→ zebrano", types.length, "elementów"); }
+	}
+	// KLIENT: wypełnij tank grabbera (matrix) typami zebranymi przez hosta. B[0]=locked type, B[1]=count, B[2..]=sloty.
+	function clientFillGrabTank(types) {
+		const tool = ST._grabTool;
+		const B = tool && tool.data && tool.data.matrix;
+		if (!B || !types || !types.length) return;
+		let filledAny = false;
+		for (const ty of types) {
+			let filled = false;
+			for (let i = 2; i < B.length; i++) { if (B[i] === 0) { B[i] = ty; B[1] = (B[1] || 0) + 1; if (!B[0]) B[0] = ty; filled = true; filledAny = true; break; } }
+			if (!filled) break; // tank pełny
+		}
+		if (filledAny && (ST._grabFillDiag = (ST._grabFillDiag || 0) + 1) <= 20) log("CLIENT tank grabbera wypełniony:", types.length, "typów, count=" + B[1]);
+	}
+
 	// Flamethrower/cryoblaster: kolejkujemy komórki (dużo/tick) i wysyłamy batchami co ~60ms — nie zalewamy sieci.
 	// Klient pomija lokalne (i tak deferred → no-op przy pauzie); host odtwarza autorytatywnie.
 	ST._fireQ = []; ST._cryoQ = [];
@@ -963,6 +1099,7 @@
 					if (!info || !info.elementType) continue;
 					if (msg.f !== null && msg.f !== undefined && info.elementType !== msg.f) continue;
 					removeAt(state, x, y);
+					markCellDirty(state, x, y); // wymuś wysyłkę lustrem (zassany element znika u klienta)
 					types.push(info.elementType);
 					taken++;
 				} catch (e) {}
@@ -1015,6 +1152,27 @@
 	};
 	// _dropLu: przy pauzie klienta kolejka mutacji nigdy nie drenuje — nie pozwól jej rosnąć
 	ST._dropLu = () => isClientSync() && ST.wsx.paused;
+	// _place (patch bundle, u ŹRÓDŁA akcji stawiania — przed runInterceptorsSafe("building:place")):
+	// KLIENT wysyła intencję do hosta i ANULUJE lokalne stawianie (return true → gra robi return null,
+	// zero zapisu komórek). Host stawia autorytatywnie w replayAction("place") i odsyła "st add" (lustro).
+	// Host/offline: return false → normalne stawianie lokalne. buildOne/SA.build NIE przechodzi przez ten
+	// hook (to niżej-poziomowe API), więc aplikacja struktur z sieci i budowanie hosta się nie zapętlają.
+	ST._place = (state, structureType, x, y, data) => {
+		if (!isClientSync()) return false; // host/offline: stawiaj normalnie
+		// KLUCZOWE: gdy MOD sam stawia strukturę z sieci (applyNetStructs/applySnapshot → buildOne → SA.build,
+		// które PRZECHODZI przez building:place!), NIE przechwytuj — inaczej anulujemy własny render potwierdzonej
+		// struktury i klient NIE WIDZI ŻADNEJ budowli (ani swojej, ani hosta). (regresja przy przejściu na patch bundle)
+		if (ST._applyingNet) return false;
+		if (structureType == null) return false; // brak typu → nie blokuj gry
+		// KLUCZOWY FIX (0.5.4): forwardujemy KAŻDY typ (string I NUMERYCZNY = enum ev). Wcześniej blokada
+		// typeof==="string" odrzucała numeryczne typy (większość budynków!) → NIC się nie forwardowało u hosta.
+		// Garde anti-flood: przy WCZYTYWANIU świata gra odpala building:place dla wielu struktur naraz
+		// (rekonstrukcja). Nie forwardujemy przez ~3s po zmianie sceny — inaczej host dostaje setki poz z save'a.
+		if (ST._loadGuardUntil && performance.now() < ST._loadGuardUntil) return false; // load → pozwól lokalnej rekonstrukcji, nie forwarduj
+		if ((ST._plDiag2 = (ST._plDiag2 || 0) + 1) <= 300) log("CLIENT forward place:", structureType, "@", x, y, "(typeof " + typeof structureType + ")");
+		try { net.send({ t: "act", k: "place", type: structureType, x, y }); } catch (e) {}
+		return true; // anuluj lokalne stawianie — klient nic nie pisze do świata
+	};
 
 	function replayAction(msg, fromId) {
 		const state = ST.state;
@@ -1032,11 +1190,16 @@
 				// klient poprosił o postawienie — host stawia AUTORYTATYWNIE. force=true: ufamy walidacji
 				// klienta (building:place odpaliło się u niego = jego kontrola kolizji przeszła), więc
 				// pomijamy kontrolę kolizji hosta (clearance:-1) — inaczej minimalna różnica stanu → build null → "auto-delete".
+				if ((ST._plRxDiag = (ST._plRxDiag || 0) + 1) <= 300) log("HOST RX place:", msg.type, "@", msg.x, msg.y, "od", fromId);
 				ST._applyingNet = true;
 				let built = null;
 				try { built = buildOne(state, { type: msg.type, x: msg.x, y: msg.y }, true); } finally { ST._applyingNet = false; }
-				if (built) { const list = [slimStruct(built)]; net.send({ t: "st", k: "add", list }); if ((ST._plDiagH = (ST._plDiagH || 0) + 1) <= 5) log("HOST: postawiono", msg.type, "@", msg.x, msg.y, "-> broadcast"); }
-				else if ((ST._plDiagHE = (ST._plDiagHE || 0) + 1) <= 5) log("HOST: NIE postawiono", msg.type, "@", msg.x, msg.y, "(build null — zla nazwa typu / kolizja u hosta?)");
+				if (built) {
+					const inStore = (state.store.structures || []).indexOf(built) >= 0;
+					const list = [slimStruct(built)]; net.send({ t: "st", k: "add", list });
+					if ((ST._plDiagH = (ST._plDiagH || 0) + 1) <= 300) log("HOST: postawiono", msg.type, "@", built.x, built.y, "(prośba", msg.x, msg.y + ")", inStore ? "[w store]" : "[!! NIE w store.structures]", "-> broadcast");
+				}
+				else if ((ST._plDiagHE = (ST._plDiagHE || 0) + 1) <= 300) log("HOST: NIE postawiono", msg.type, "@", msg.x, msg.y, "(build zwrócił null — zła nazwa typu / kolizja u hosta?)");
 			} else if (msg.k === "build") {
 				ST._applyingNet = true;
 				try { for (const s of msg.list) buildOne(state, s); } finally { ST._applyingNet = false; }
@@ -1047,6 +1210,8 @@
 				net.send({ t: "st", k: "rm", list: msg.list });
 			} else if (msg.k === "vac") {
 				hostHarvestVacuum(msg, fromId);
+			} else if (msg.k === "grabH") {
+				hostHarvestGrab(msg, fromId);
 			} else if (msg.k === "move") {
 				ST._applyingNet = true;
 				try { for (const s of msg.from) removeOne(state, s); for (const s of msg.to) buildOne(state, s); } finally { ST._applyingNet = false; }
@@ -1057,18 +1222,29 @@
 				if (item && items && items.pickUp) { ST._applyingNet = true; try { items.pickUp(state, item); } finally { ST._applyingNet = false; } }
 				else if (item) state.store.worldItems = state.store.worldItems.filter((i) => i.id !== msg.id);
 			} else if (msg.k === "grabPick") {
+				const { sim: gsim, W: gW, H: gH } = worldBuffers(state);
+				const gsim32 = gsim && gW ? new Uint32Array(gsim.buffer, gsim.byteOffset, gW * gH) : null;
+				const gidx = gsim32 && msg.x >= 0 && msg.y >= 0 && msg.x < gW && msg.y < gH ? msg.x + msg.y * gW : -1;
+				const gbefore = gidx >= 0 ? gsim32[gidx] : -1;
 				ST._applyingNet = true;
-				try { if (ST.FH.elements && ST.FH.elements.removeAt) ST.FH.elements.removeAt(state, msg.x, msg.y); } finally { ST._applyingNet = false; }
+				try { if (ST.FH.elements && ST.FH.elements.removeAt) ST.FH.elements.removeAt(state, msg.x, msg.y); } finally { ST._applyingNet = false; } markCellDirty(state, msg.x, msg.y);
+				const gafter = gidx >= 0 ? gsim32[gidx] : -1;
+				if ((ST._grabPickHostDiag = (ST._grabPickHostDiag || 0) + 1) <= 60)
+					log("HOST grabPick @", msg.x, msg.y, "before=" + gbefore, "after=" + gafter, gbefore >= ELEMENTS_MIN && gafter === 0 ? "[OK retiré]" : gafter === gbefore ? "[!! removeAt N'A RIEN retiré]" : "[after=" + gafter + "]");
 			} else if (msg.k === "grabPlace") {
+				if (!validElement(msg.et)) return; // ochrona przed starym klientem (≤0.9.8) słącym et=null → createAt crash
 				ST._applyingNet = true;
 				try {
-					// komórka zajęta u hosta (rozjazd) → createAt by no-opnął i element klienta by cicho przepadł; logujemy
 					const { sim, W, H } = worldBuffers(state);
-					if (sim && W && msg.x >= 0 && msg.y >= 0 && msg.x < W && msg.y < H) {
-						const occ = new Uint32Array(sim.buffer, sim.byteOffset, W * H)[msg.x + msg.y * W];
-						if (occ !== 0) log("HOST: grabPlace KONFLIKT (komórka zajęta) @", msg.x, msg.y, "et=" + msg.et, "— element klienta utracony");
-					}
+					const sim32 = sim && W ? new Uint32Array(sim.buffer, sim.byteOffset, W * H) : null;
+					const inb = sim32 && msg.x >= 0 && msg.y >= 0 && msg.x < W && msg.y < H;
+					const before = inb ? sim32[msg.x + msg.y * W] : -1;
 					if (ST.FH.elements && ST.FH.elements.createAt) ST.FH.elements.createAt(state, msg.x, msg.y, msg.et);
+					markCellDirty(state, msg.x, msg.y); // wymuś wysyłkę chunku lustrem → klient dostaje odłożony element (re-grab)
+					const after = inb ? sim32[msg.x + msg.y * W] : -1;
+					// DIAG: createAt a-t-il vraiment placé un élément (after∈[MIN,MAX]) ? sinon on saura pourquoi le re-grab échoue
+					if ((ST._grabPlaceHostDiag = (ST._grabPlaceHostDiag || 0) + 1) <= 60)
+						log("HOST grabPlace @", msg.x, msg.y, "et=" + msg.et, "before=" + before, "after=" + after, (after >= ELEMENTS_MIN && after <= ELEMENTS_MAX) ? "[OK placé]" : "[!! rien après createAt — perdu/occupé]");
 				} finally { ST._applyingNet = false; }
 			} else if (msg.k === "fireB") {
 				const el = ST.FH.elements, fi = ST.FH.fire, c = msg.c || [];
@@ -1388,6 +1564,51 @@
 			return Math.atan2(mouse.worldPosition.y - pl.y, mouse.worldPosition.x - pl.x);
 		} catch (e) { return 0; }
 	}
+	// Pozycja kursora w świecie (ta sama przestrzeń co player.x/y → działa z worldToScreen).
+	function getMouseWorld(state) {
+		try { const m = state.session.input && state.session.input.mouse; const w = m && m.worldPosition; return w && typeof w.x === "number" ? { x: Math.round(w.x), y: Math.round(w.y) } : null; } catch (e) { return null; }
+	}
+	// Intencja BUDOWANIA: co gracz zaraz postawi (fantom pozy). Źródło (0.5.4): przy normalnej pozie z hotbara
+	// gra trzyma aktywny typ w session.building.activeStructureType (customData.selectedStructures jest TYLKO
+	// dla kopiuj-wklej blueprintów → dlatego wcześniej fantom NIGDY się nie pokazywał). Fallback: player.action.id
+	// (action Building niesie id=structureId). Blueprint copy: dokładamy offsety z selectedStructures.
+	function getBuildIntent(state) {
+		try {
+			const ss = state.session || {};
+			const pl = state.store && state.store.player;
+			let bt = ss.building && ss.building.activeStructureType;
+			// GŁÓWNE ŹRÓDŁO (potwierdzone GHOST-DIAG): activeStructureType jest null przy HOVER; typ wybranego
+			// budynku bierzemy z aktywnego slotu hotbara: hotbar.bars[hotbarIndex][activeSlotIndex].
+			if (bt == null && pl && pl.hotbar && pl.hotbar.activeSlotIndex != null) {
+				const bar = pl.hotbar.bars && pl.hotbar.bars[pl.hotbar.hotbarIndex];
+				const item = bar && bar[pl.hotbar.activeSlotIndex];
+				if (item != null) bt = (typeof item === "object") ? (item.structureType != null ? item.structureType : item.type != null ? item.type : item.id) : item;
+			}
+			if (bt == null) {
+				const a = pl && pl.action;
+				if (a && a.id != null) bt = a.id; // {type:Building, id:structureId}
+			}
+			// DIAG (jednorazowo): slot hotbara aktywny, ale nie znaleźliśmy typu → zrzuć KSZTAŁT itemu hotbara + stan
+			if (bt == null && pl && pl.hotbar && pl.hotbar.activeSlotIndex != null && !ST._biDumped) {
+				ST._biDumped = true;
+				try {
+					const hb = pl.hotbar, bar = hb.bars && hb.bars[hb.hotbarIndex], item = bar && bar[hb.activeSlotIndex];
+					log("GHOST-DIAG: activeSlot=" + hb.activeSlotIndex + " hotbarIndex=" + hb.hotbarIndex,
+						"ITEM=" + JSON.stringify(item) + " (typeof " + typeof item + (item && typeof item === "object" ? " keys=" + Object.keys(item).join(",") : "") + ")",
+						"hotbar keys=" + Object.keys(hb).join(","),
+						"session.building=" + JSON.stringify(ss.building));
+				} catch (e2) { log("GHOST-DIAG err:", e2.message); }
+			}
+			if (bt == null) return null;
+			if (!ST._biOk) { ST._biOk = true; log("GHOST OK: intencja pozy wykryta, bt=" + JSON.stringify(bt)); }
+			// blueprint (kopiuj-wklej): kilka struktur z offsetami; single-struct → [[0,0]] pod kursorem
+			const cd = ss.action && ss.action.customData;
+			const sel = cd && Array.isArray(cd.selectedStructures) ? cd.selectedStructures : null;
+			let offs = [[0, 0]];
+			if (sel && sel.length > 1) { offs = []; for (let i = 0; i < sel.length && i < 24; i++) offs.push([(sel[i].x | 0), (sel[i].y | 0)]); }
+			return { bt, offs };
+		} catch (e) { return null; }
+	}
 	function getTrailAlpha(state) {
 		try {
 			const tc = state.session.rendering.pixi.sprites.player.trailContainer;
@@ -1478,6 +1699,44 @@
 			drawProj(ST.remoteProjectiles);
 			for (const p of ST.peers.values()) drawProj(p.projectiles);
 		}
+		// --- Preview akcji w czasie rzeczywistym (temps réel): fantom pozy + reticle grabbera/vacuum ---
+		// Pokazuje GDZIE inny gracz zaraz postawi budynek / gdzie zbiera zasoby — żeby nie robić tego w tym
+		// samym miejscu. Rysowane w kolorze gracza. Kursor w świecie (mwx/mwy) + intencja budowy (bt/boffs).
+		if (ctx && gc) {
+			for (const [id, p] of ST.peers) {
+				if (p.mwx == null || p.mwy == null || now - p.lastSeen > 3000) continue;
+				if (!p.color) p.color = peerColor(id);
+				const cur = worldToScreen(state, p.mwx, p.mwy);
+				if (cur.x < -80 || cur.y < -80 || cur.x > gc.width + 80 || cur.y > gc.height + 80) continue;
+				const s1 = worldToScreen(state, p.mwx + 4, p.mwy); // +1 komórka (=4 world) → piksele/komórkę (skala zoomu)
+				let ppc = Math.abs(s1.x - cur.x); if (!(ppc > 0.5)) ppc = 6;
+				if (p.bt != null && Array.isArray(p.boffs) && p.boffs.length) {
+					// FANTOM POZY — prostokąty tam, gdzie gracz zaraz postawi (pierwszy offset = pod kursorem)
+					const base = p.boffs[0];
+					ctx.save();
+					ctx.strokeStyle = p.color.body; ctx.fillStyle = p.color.body; ctx.lineWidth = 2;
+					const sz = Math.max(8, ppc);
+					for (const off of p.boffs) {
+						const wx = p.mwx + (((off && off[0]) | 0) - (base[0] | 0)) * 4, wy = p.mwy + (((off && off[1]) | 0) - (base[1] | 0)) * 4;
+						const s = worldToScreen(state, wx, wy);
+						ctx.globalAlpha = 0.22; ctx.fillRect(s.x - sz / 2, s.y - sz / 2, sz, sz);
+						ctx.globalAlpha = 0.9; ctx.strokeRect(s.x - sz / 2, s.y - sz / 2, sz, sz);
+					}
+					ctx.restore();
+				} else if ((p.tools || []).indexOf("vacuum") >= 0) {
+					// RETICLE grabbera/vacuum — okrąg zasięgu tam, gdzie gracz zbiera (żeby nie brać tych samych zasobów)
+					const r = Math.max(10, ppc * 4); // ~R=4 komórki (zasięg vacuum z hostHarvestVacuum)
+					ctx.save();
+					ctx.strokeStyle = p.color.body; ctx.fillStyle = p.color.body; ctx.lineWidth = 2;
+					ctx.globalAlpha = 0.9; ctx.setLineDash([5, 4]);
+					ctx.beginPath(); ctx.arc(cur.x, cur.y, r, 0, Math.PI * 2); ctx.stroke();
+					ctx.setLineDash([]);
+					ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.arc(cur.x, cur.y, 2.5, 0, Math.PI * 2); ctx.fill();
+					ctx.restore();
+				}
+			}
+			ctx.globalAlpha = 1;
+		}
 	}
 
 	// ------------------------------------------------------------------
@@ -1494,6 +1753,9 @@
 		if (FH && !ST.FH) ST.FH = FH;
 		// wykrycie zmiany sceny/świata (przeładowanie stanu)
 		if (ST.state !== state) { ST.state = state; ST.wsx.paused = false; log("Nowy obiekt stanu (zmiana sceny?)"); }
+		// Garde anti-flood pozy: przy wejściu do świata (zmiana scene.active) gra rekonstruuje struktury
+		// odpalając building:place → nie forwarduj ich przez 3s (patrz ST._place).
+		{ const sc = state.store && state.store.scene && state.store.scene.active; if (sc !== ST._lastScene) { ST._lastScene = sc; ST._loadGuardUntil = performance.now() + 3000; } }
 		if (!ST._debugDumped && state.session && state.session.camera) {
 			ST._debugDumped = true;
 			try {
@@ -1525,7 +1787,12 @@
 		if (net && ST.net.role !== "idle" && state.store && state.store.player && now - ST._lastPosSend > 33) {
 			ST._lastPosSend = now;
 			const pl = state.store.player;
-			net.send({ t: "pos", x: Math.round(pl.x * 10) / 10, y: Math.round(pl.y * 10) / 10, tools: getVisibleTools(state), facing: getFacing(state), aim: getAimAngle(state), trail: getTrailAlpha(state) });
+			const bi = getBuildIntent(state);
+			const mw = getMouseWorld(state);
+			if (bi && !ST._biLogged) { ST._biLogged = true; log("Intencja pozy wykryta (fantom powinien się pokazać u drugiego gracza): bt=" + bi.bt); }
+			net.send({ t: "pos", x: Math.round(pl.x * 10) / 10, y: Math.round(pl.y * 10) / 10, tools: getVisibleTools(state), facing: getFacing(state), aim: getAimAngle(state), trail: getTrailAlpha(state),
+				mwx: mw ? mw.x : null, mwy: mw ? mw.y : null,           // kursor w świecie (preview akcji)
+				bt: bi ? bi.bt : null, boffs: bi ? bi.offs : null });   // intencja pozy: typ + offsety (fantom u innych graczy)
 		}
 		// ping/pong (RTT) — wysyłka co 1s, odświeżanie HUD co 0.5s (wkład dotNine)
 		if (net && ST.net.role !== "idle" && ST.peers.size && now - (ST._lastPingSent || 0) > 1000) {

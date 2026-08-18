@@ -6,7 +6,7 @@ tags: [porting, plan, macos]
 use_when:
   - starting a work session on this repo and choosing what to do next
   - writing a design spec for any port work item
-timestamp: 2026-08-18T21:00:00Z
+timestamp: 2026-08-18T21:45:00Z
 ---
 
 # macOS port plan
@@ -30,9 +30,13 @@ port is about installation, launch, paths, and anchor verification. Order:
    [macos-codesign](../gotchas/macos-codesign.md)); `[SandTogether]`
    active in `~/Library/Logs/Sandustry/main.log`, world state captured,
    event subscriptions live.
-5. **Two-instance LAN test** — `--st-userdata=<dir>` second instance,
-   Host LAN / Join LAN on 127.0.0.1. See
-   [dev-loop-macos](dev-loop-macos.md).
+5. **Two-instance LAN test** — ✅ DONE 2026-08-18: upstream's clickless
+   `--st-autotest=host` / `--st-autotest=join --st-userdata=/tmp/st2`
+   flags used; peers connected, players visible to each other, world
+   stream live both ways (host ~30–55 KB/s, 60–130 chunks/s; client
+   mirroring). Host shows a false "old mod" warning — upstream WS
+   quirk, see
+   [ws-hello-mver-false-alarm](../gotchas/ws-hello-mver-false-alarm.md).
 6. **Steam P2P test** — steamworks.js `dist/osx` is bundled (verified);
    test lobby create/invite/join, ideally cross-platform vs a Windows
    host.

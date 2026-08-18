@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.29-beta";
+	const VER = "0.9.30-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -1227,7 +1227,15 @@
 	// gra, uwzględnia shape) i wyślij istniejącym kanałem act demolish. Host usuwa, st rm potwierdza.
 	ST._demol = (state, start, end) => {
 		try {
-			if (!isClientSync() || !ST.wsx.paused) return false; // host/solo → normalna lokalna rozbiórka
+			// HOST: NIE przechwytujemy (gra rozbiera normalnie), ale zapamiętujemy rect — 250ms później
+			// dobijamy NIEDOBITKI przez SA.removeAt. Powód: kafle budynków z replayu klienta potrafią
+			// utknąć w stanie QUEUED (block-access), a rozbiórka gry takie kafle POMIJA → "czerwone
+			// klocki, których nawet host nie może usunąć". SA.removeAt idzie inną ścieżką i je zdejmuje.
+			if (ST.net.role === "host" && ST.peers.size > 0) {
+				ST._hostDemolRect = { x0: Math.floor(Math.min(start.x, end.x)), y0: Math.floor(Math.min(start.y, end.y)), x1: Math.ceil(Math.max(start.x, end.x)), y1: Math.ceil(Math.max(start.y, end.y)), t: performance.now() };
+				return false;
+			}
+			if (!isClientSync() || !ST.wsx.paused) return false; // solo/klient poza lustrem → normalna lokalna rozbiórka
 			// rury (Pipe) idą w grze osobną funkcją — nie przechwytujemy (na razie lokalnie)
 			try { const sel = ST.FH.action && ST.FH.action.getSelected && ST.FH.action.getSelected(state); if (sel && String(sel.id).toLowerCase().indexOf("pipe") >= 0) return false; } catch (e) {}
 			const SA = structNs(); if (!SA) { log("_demol: brak API struktur"); return false; }
@@ -1889,6 +1897,26 @@
 			sendSnapshotIfDue(state);
 			sendResourcesIfDue(state);
 			sendEntitiesIfDue(state);
+			// Dobijanie po rozbiórce hosta (patrz _demol): 250ms po przeciągnięciu sprawdź, czy w recie
+			// zostały struktury pominięte przez grę (kafle utkwione w QUEUED) i zdejmij je przez SA.removeAt.
+			const hd = ST._hostDemolRect;
+			if (hd && performance.now() - hd.t > 250) {
+				ST._hostDemolRect = null;
+				try {
+					const SA = structNs();
+					if (SA && (hd.x1 - hd.x0 + 1) * (hd.y1 - hd.y0 + 1) <= 40000) {
+						const leftovers = new Map();
+						for (let y = hd.y0; y <= hd.y1; y++) for (let x = hd.x0; x <= hd.x1; x++) {
+							try { const st = SA.getAtCell(state, x, y); if (st) leftovers.set(structKey(st), st); } catch (e) {}
+						}
+						if (leftovers.size) {
+							log("HOST demolish-dobicie: gra pominęła", leftovers.size, "struktur (kafle QUEUED?) — usuwam przez removeAt");
+							for (const st of leftovers.values()) { try { SA.removeAt(state, st.x, st.y, {}); } catch (e) {} }
+							net.send({ t: "st", k: "rm", list: [...leftovers.values()].map(slimStruct) });
+						}
+					}
+				} catch (e) { log("demolish-dobicie error:", e.message); }
+			}
 		}
 		if (isClientSync()) {
 			// Heartbeat re-pauzy (fix G1): ESC-menu gry śle własne SetPaused(false) przy zamknięciu i cicho

@@ -93,7 +93,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.29-beta — hotfix for 0.9.28\'s client demolish: the selection rectangle was converted to cell coordinates TWICE, so the mod scanned a wrong (4x smaller) area, found nothing and silently did nothing — exactly the "nothing happens, no log" TCentraL reported minutes after release. Coordinates fixed, and every code path now logs, so a silent failure like this cannot hide again. Demolishing as the joining player should now actually work — clicks and drag-boxes. Both players update + re-run install.bat.',
+    changeNote: 'v0.9.30-beta — THE RED UNDELETABLE BLOCKS CAN NOW BE REMOVED. Cause found: structures placed via the network can leave their tiles stuck in an internal "queued" state, and the game\'s demolisher deliberately skips such tiles — so those half-red foundations could not be deleted by anyone. Now, when the HOST demolishes an area, the mod checks a moment later for structures the game skipped and force-removes them through a different path. So: host drags the demolisher over a stuck red block → it disappears (log shows "demolish-dobicie"). Also includes 0.9.29\'s fix for client-side demolishing (coordinate bug). Both players update + re-run install.bat.',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

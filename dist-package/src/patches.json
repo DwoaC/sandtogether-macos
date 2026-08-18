@@ -1,5 +1,5 @@
 {
-  "supportedVersions": ["0.5.3", "0.5.2"],
+  "supportedVersions": ["0.5.4", "0.5.3", "0.5.2"],
   "bundle": [
     {
       "name": "frame hook (state+FH capture)",
@@ -34,6 +34,29 @@
         {
           "anchor": "T=(e,t,n,a,o)=>{m.on.setCellId(e.shared.sim,t,n,a),",
           "patched": "T=(e,t,n,a,o)=>{if(window.SandTogether&&window.SandTogether._setCell&&window.SandTogether._setCell(e,t,n,a,o))return;m.on.setCellId(e.shared.sim,t,n,a),"
+        }
+      ]
+    },
+    {
+      "name": "building place hook (_place)",
+      "variants": [
+        {
+          "anchor": "if(\"string\"==typeof u&&!0===B.FH.events.emit(e,\"building:place\",{structureId:u,x:t.x,y:t.y}))return null;",
+          "patched": "if(window.SandTogether&&window.SandTogether._place&&window.SandTogether._place(e,u,t.x,t.y))return null;if(\"string\"==typeof u&&!0===B.FH.events.emit(e,\"building:place\",{structureId:u,x:t.x,y:t.y}))return null;"
+        },
+        {
+          "anchor": "if((0,O.Im)(e,h)&&T.FH.hooks.runInterceptorsSafe(e,\"building:place\",{structureId:h,x:t.x,y:t.y,data:m}))return null;",
+          "patched": "if(window.SandTogether&&window.SandTogether._place&&window.SandTogether._place(e,h,t.x,t.y,m))return null;if((0,O.Im)(e,h)&&T.FH.hooks.runInterceptorsSafe(e,\"building:place\",{structureId:h,x:t.x,y:t.y,data:m}))return null;"
+        }
+      ]
+    },
+    {
+      "name": "grabber host-side hook (_grab)",
+      "critical": false,
+      "variants": [
+        {
+          "anchor": "z=(e,t)=>{var n,l,m,p,b,v,C,k;let E=e.session;const B=t.data.matrix;let S=B[1];",
+          "patched": "z=(e,t)=>{if(window.SandTogether&&window.SandTogether._grab&&window.SandTogether._grab(e,t))return;var n,l,m,p,b,v,C,k;let E=e.session;const B=t.data.matrix;let S=B[1];"
         }
       ]
     },
@@ -94,6 +117,10 @@
       "critical": false,
       "variants": [
         {
+          "anchor": "(e,t,n,s,r=0)=>{if(t<0||n<0||t>=e.store.world.size.width||n>=e.store.world.size.height)return;",
+          "patched": "(e,t,n,s,r=0)=>{if(window.SandTogether&&window.SandTogether._fire&&window.SandTogether._fire(e,t,n,s,r))return;if(t<0||n<0||t>=e.store.world.size.width||n>=e.store.world.size.height)return;"
+        },
+        {
           "anchor": "s=0)=>{if(t<0||n<0||t>=e.store.world.size.width||n>=e.store.world.size.height)return;const i",
           "patched": "s=0)=>{if(window.SandTogether&&window.SandTogether._fire&&window.SandTogether._fire(e,t,n,o,s))return;if(t<0||n<0||t>=e.store.world.size.width||n>=e.store.world.size.height)return;const i"
         }
@@ -103,6 +130,10 @@
       "name": "cryoblaster freeze hook",
       "critical": false,
       "variants": [
+        {
+          "anchor": "const b=i;(0,u.Lu)(e,s,r,e=>{if(!(0,f.lV)(e,s,r))return",
+          "patched": "const b=i;window.SandTogether&&window.SandTogether._cryo&&window.SandTogether._cryo(e,s,r),(0,u.Lu)(e,s,r,e=>{if(!(0,f.lV)(e,s,r))return"
+        },
         {
           "anchor": "x={x:Math.cos(b)*U,y:Math.sin(b)*U};(0,h.Lu)(e,i,l,e=>{if(!(0,u.lV)(e,i,l))return",
           "patched": "x={x:Math.cos(b)*U,y:Math.sin(b)*U};window.SandTogether&&window.SandTogether._cryo&&window.SandTogether._cryo(e,i,l),(0,h.Lu)(e,i,l,e=>{if(!(0,u.lV)(e,i,l))return"

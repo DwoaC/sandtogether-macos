@@ -369,6 +369,70 @@ function stopNetworking(reason) {
 
 function safeJson(o) { try { return JSON.parse(JSON.stringify(o, (k, v) => typeof v === 'bigint' ? String(v) : v)); } catch (e) { return String(o); } }
 
+// ============================================================================
+// AUTO-UPDATE Z WARSZTATU: przy każdym starcie gry porównujemy wersję moda w folderze
+// Workshop (Steam aktualizuje go sam) z zainstalowaną. Nowsza → kopiujemy pliki, nakładamy
+// patche bundle (idempotentnie, jak install.ps1) i restartujemy grę. Gracz robi install.bat
+// tylko RAZ — każda kolejna aktualizacja wchodzi sama. Autor z nowszą lokalną wersją niż
+// Workshop NIE jest cofany (porównanie numeryczne, update tylko w górę).
+// ============================================================================
+const WORKSHOP_ITEM = '3784750764';
+function parseVer(file) {
+  try {
+    const m = /const VER = "(\d+)\.(\d+)\.(\d+)/.exec(fs.readFileSync(file, 'utf8').slice(0, 4000));
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  } catch (e) { return null; }
+}
+function applyBundlePatches(bundlePath, patches) {
+  let s = fs.readFileSync(bundlePath, 'utf8');
+  let dirty = false, criticalFail = false, appliedN = 0;
+  for (const pt of patches.bundle || []) {
+    let applied = false, already = false;
+    for (const v of pt.variants || []) {
+      if (s.indexOf(v.patched) >= 0) { already = true; break; }
+      const i1 = s.indexOf(v.anchor);
+      if (i1 < 0) continue;
+      if (s.indexOf(v.anchor, i1 + 1) >= 0) continue; // kotwica nieunikalna w tym wariancie
+      s = s.slice(0, i1) + v.patched + s.slice(i1 + v.anchor.length);
+      dirty = true; applied = true; appliedN++;
+      break;
+    }
+    if (!applied && !already && pt.critical) criticalFail = true;
+  }
+  if (dirty) fs.writeFileSync(bundlePath, s);
+  return { criticalFail, appliedN };
+}
+function autoUpdateFromWorkshop() {
+  try {
+    const appDir = __dirname; // .../steamapps/common/Sandustry/resources/app
+    const steamapps = path.resolve(appDir, '..', '..', '..', '..');
+    const ws = path.join(steamapps, 'workshop', 'content', '2764460', WORKSHOP_ITEM);
+    const wsMod = path.join(ws, 'src', 'sandtogether.js');
+    const localMod = path.join(appDir, 'dist', 'js', 'sandtogether.js');
+    if (!fs.existsSync(wsMod) || !fs.existsSync(localMod)) return;
+    const wv = parseVer(wsMod), lv = parseVer(localMod);
+    if (!wv || !lv) return;
+    const cmp = (wv[0] - lv[0]) || (wv[1] - lv[1]) || (wv[2] - lv[2]);
+    if (cmp <= 0) return; // lokalna >= Workshop → nic do roboty (m.in. autor moda)
+    log('AUTO-UPDATE: Workshop ma ' + wv.join('.') + ', lokalnie ' + lv.join('.') + ' — aktualizuję...');
+    fs.copyFileSync(wsMod, localMod);
+    try { fs.copyFileSync(path.join(ws, 'src', 'st-main.js'), path.join(appDir, 'st-main.js')); } catch (e) {}
+    try {
+      const pl = path.join(appDir, 'preload.js');
+      let ps = fs.readFileSync(pl, 'utf8');
+      if (ps.indexOf('sandtogetherNet') < 0) { ps += '\n' + fs.readFileSync(path.join(ws, 'src', 'st-preload-append.js'), 'utf8'); fs.writeFileSync(pl, ps); }
+    } catch (e) {}
+    const patches = JSON.parse(fs.readFileSync(path.join(ws, 'src', 'patches.json'), 'utf8'));
+    const res = applyBundlePatches(path.join(appDir, 'dist', 'js', 'bundle.js'), patches);
+    log('AUTO-UPDATE: pliki skopiowane, patche bundle: +' + res.appliedN + (res.criticalFail ? ' (UWAGA: krytyczna kotwica nie pasuje — build gry nowszy niż mod!)' : ''));
+    // restart, żeby nowe pliki (bundle/renderer/main) faktycznie się załadowały
+    const { app } = require('electron');
+    log('AUTO-UPDATE: restart gry z nową wersją moda ' + wv.join('.'));
+    app.relaunch();
+    app.exit(0);
+  } catch (e) { log('autoUpdate error:', e.message); }
+}
+
 // Odcisk buildu GRY (rozmiar bundle + sha1 pierwszych 256KB): Steam potrafi serwować różnym ludziom
 // różne buildy o tym samym numerze wersji — różne enumy/kotwice. Porównywany przy wymianie mver.
 let _gameFpCache;
@@ -391,6 +455,7 @@ function gameFingerprint() {
 // ---------------------------------------------------------------------------
 function init(opts) {
   S.getMainWindow = opts.getMainWindow;
+  autoUpdateFromWorkshop(); // nowsza wersja w folderze Workshop → auto-instalacja + restart gry
   // Diagnostyka: pokaż argumenty startu (widać czy Steam podał +connect_lobby przy dołączaniu)
   try { log('start argv:', JSON.stringify(process.argv.slice(1))); } catch (e) {}
   // Steam inicjalizuje się asynchronicznie po starcie appki — próbuj do skutku

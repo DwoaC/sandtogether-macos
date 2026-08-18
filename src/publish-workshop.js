@@ -100,7 +100,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.38-beta — network & robustness batch: (1) ROW-DELTA world streaming (protocol v5): only changed 40-cell rows are sent instead of whole chunks — typically 2-10x less bandwidth, which directly reduces lag on slower connections. (2) CRITTERS collected by the joining player now disappear from the host\'s map too (no double-collect). (3) STEAM AUTO-REJOIN: if the P2P link drops, the joiner automatically re-enters the lobby (up to 5 tries), same as the LAN reconnect. (4) The panel now warns when the two players run DIFFERENT GAME BUILDS (Steam sometimes serves different builds under the same version number — this caused several mystery bugs). Includes 0.9.37 (chat, per-player memory, machine settings, instant drops). Both players MUST update together (new protocol) + re-run install.bat.',
+    changeNote: 'v0.9.39-beta — THE LAST TIME YOU EVER NEED install.bat! The mod now AUTO-UPDATES: at every game launch it checks the Workshop folder (which Steam keeps fresh), installs any newer version by itself — files, game patches, everything — and restarts the game once. Run install.bat one final time to get 0.9.39, and from then on both players are always on the same version automatically. This kills the No.1 source of "nothing works" reports (one player on an old mod). Also in this line: row-delta streaming (2-10x less bandwidth), Steam auto-rejoin, different-game-build warning, chat, per-player memory, machine settings sync, instant drops (0.9.37-38).',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

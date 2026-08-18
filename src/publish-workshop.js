@@ -93,7 +93,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.34-beta — RESEARCH & UPGRADES ARE NOW SHARED (fixes Warlow\'s report)! Until now the joining player\'s upgrade/tech purchases were free (the cost bounced back within a second), invisible to the host, and host purchases never reached the joiner. Now the whole team shares one pool: any player\'s upgrade or tech unlock is applied by the host authoritatively (cost deducted for real) and synced to everyone within a second — including the tech tree, upgrade levels and progression unlocks, so hover/tooltips work for the joiner too. Also includes 0.9.32-33: the red undeletable blocks (orphaned foundation tiles) are cleaned by the demolisher — confirmed live, 112 tiles removed. Both players update + re-run install.bat.',
+    changeNote: 'v0.9.35-beta — BIG two-way sync batch, everything below now works for the joining player: (1) PIPE demolition (was local-only). (2) STORY steps & objectives triggered by the joiner now count for the team (they used to revert after 1s). (3) CRITTER collection by the joiner counts (incl. first-catch conservatory tickets). (4) SIGNAL wiring (link/unlink), signal buttons and blueprint COPY-PASTE by the joiner are executed by the host — automation is no longer host-only. (5) When the HOST pauses (menu), the joiner now sees "Host paused — world frozen" instead of a silent freeze, plus a stall indicator. (6) RECONNECT: rejoining the same world no longer requires re-transferring the save. Plus 0.9.34: shared research/upgrade pool. Both players update + re-run install.bat.',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

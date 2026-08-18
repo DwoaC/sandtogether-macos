@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.34-beta";
+	const VER = "0.9.35-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -36,6 +36,7 @@
 		en: {
 			offline: "offline", btn_host: "Host (Steam)", btn_invite: "Invite", btn_host_lan: "Host LAN",
 			btn_join_lan: "Join LAN", btn_connect: "Connect", btn_stop: "Stop", btn_send_world: "Send world", btn_resync: "Resync",
+			host_paused: "Host paused (menu) — world frozen, will resume automatically", sync_stalled: "No world data from host for {0}s…",
 			btn_join_id: "Join by ID (clipboard)", lobby_copied: "Copied!",
 			clipboard_no_id: "Clipboard has no Lobby ID — first click the host's green Lobby ID line to copy it",
 			hint: "click header to hide (Ctrl+Shift+H)", by: "by " + AUTHOR + " + " + CONTRIBUTORS,
@@ -63,6 +64,7 @@
 		pl: {
 			offline: "offline", btn_host: "Host (Steam)", btn_invite: "Zaproś", btn_host_lan: "Host LAN",
 			btn_join_lan: "Dołącz LAN", btn_connect: "Połącz", btn_stop: "Stop", btn_send_world: "Wyślij świat", btn_resync: "Resync",
+			host_paused: "Host w pauzie (menu) — świat zamrożony, wznowi się sam", sync_stalled: "Brak danych świata od hosta od {0}s…",
 			btn_join_id: "Dołącz po ID (schowek)", lobby_copied: "Skopiowano!",
 			clipboard_no_id: "Schowek nie zawiera Lobby ID — najpierw kliknij zieloną linię Lobby ID u hosta, żeby je skopiować",
 			hint: "kliknij nagłówek by ukryć (Ctrl+Shift+H)", by: "autor: " + AUTHOR + " + " + CONTRIBUTORS,
@@ -137,6 +139,16 @@
 		_sndWarned: false,
 	});
 	ST._sprayFlag = () => { ST._sprayCtx = 1; queueMicrotask(() => { ST._sprayCtx = 0; }); };
+	// HEARTBEAT HOSTA (fix G4): gdy host pauzuje (menu), frame:update NIE odpala → cały sync zamiera
+	// bez słowa. setInterval to timer JS — działa mimo pauzy sima. Klient dostaje hb i wie, co się dzieje.
+	setInterval(() => {
+		try {
+			if (ST.net.role === "host" && ST.peers.size && ST.state && net) {
+				const p = !!(ST.state.session && ST.state.session.paused);
+				net.send({ t: "hb", p });
+			}
+		} catch (e) {}
+	}, 1000);
 
 	log("Renderer mod załadowany", VER);
 
@@ -362,6 +374,13 @@
 				setStatus(t("ver_mismatch") + " [" + ((p && p.nick) || from) + ": " + msg.v + " / you: " + VER + "]", "#f66");
 				log("RÓŻNE WERSJE MODA:", from, "ma", msg.v, "— ja mam", VER);
 			} else log("wersja moda OK u", (p && p.nick) || from, "->", msg.v);
+		} else if (msg.t === "hb") {
+			// heartbeat hosta (fix G4): jedyny sygnał, który przechodzi gdy host pauzuje (frame stoi)
+			if (ST.net.role === "client") {
+				ST._lastHb = performance.now();
+				if (msg.p && !ST._hostPausedShown) { ST._hostPausedShown = true; setStatus(t("host_paused"), "#fd5"); }
+				else if (!msg.p && ST._hostPausedShown) { ST._hostPausedShown = false; setStatus(t("players", ST.peers.size + 1)); }
+			}
 		} else if (msg.t === "wc") {
 			applyWorldBatch(msg).catch((e) => log("apply error:", e.message));
 		} else if (msg.t === "act") {
@@ -600,7 +619,9 @@
 			// Ufamy gdy: (a) już zaufany, (b) okno po auto-load, LUB (c) dostaliśmy świat OD tego hosta (world-begin)
 			// i OBOJE jesteśmy w grze (scene≠1) — czyli klient faktycznie wczytał save hosta (auto- lub ręcznie).
 			const bothInWorld = msg.scene !== 1 && myScene !== 1;
-			const trusting = ST._trustedWid === msg.wid || (ST._pendingTrustUntil && performance.now() < ST._pendingTrustUntil) || (ST._gotHostWorld && bothInWorld);
+			// _lastGoodWid: wid hosta zaufany w POPRZEDNIEJ sesji (przetrwa reconnect) — ten sam wid
+			// = dokładnie ten sam świat, który już mamy wczytany → rejoin BEZ ponownego transferu (fix G8-lite)
+			const trusting = ST._trustedWid === msg.wid || (ST._pendingTrustUntil && performance.now() < ST._pendingTrustUntil) || (ST._gotHostWorld && bothInWorld) || (ST._lastGoodWid === msg.wid && bothInWorld);
 			if (!trusting) {
 				setStatus(t("other_world"), "#f66");
 				if (!ST.wsx.mismatchLogged) { ST.wsx.mismatchLogged = true; log("REJECT world: worldId host=" + msg.wid + " me=" + myWid + " scene h/c=" + msg.scene + "/" + myScene); }
@@ -608,6 +629,7 @@
 			}
 			if (ST._trustedWid !== msg.wid) log("worldId różni się po auto-load, ale ufam (świeżo odebrany od hosta):", msg.wid);
 			ST._trustedWid = msg.wid; ST._pendingTrustUntil = 0;
+			ST._lastGoodWid = msg.wid; // pamięć przez reconnect (celowo NIE czyszczona przy joined/stopped)
 		}
 		const { map, wall, shadow, W, H } = worldBuffers(state);
 		if (!map || W !== msg.W || H !== msg.H) {
@@ -663,6 +685,7 @@
 			}
 		}
 		const w = ST.wsx;
+		if (applied > 0) ST._lastWcT = performance.now(); // do wskaźnika zatoru (sync_stalled)
 		if (applied > 0 && !w.everApplied) { w.everApplied = true; log("Pierwsze paczki świata zastosowane — lustro działa"); setStatus(t("players", ST.peers.size + 1)); }
 		w.applyBytes += msg.d.length * 0.75; w.applyCount += applied;
 		const now = performance.now();
@@ -765,6 +788,41 @@
 				if (ST._applyingNet || ST.net.role !== "client" || !data) return;
 				net.send({ t: "act", k: "tech", id: data.techId, cost: resCostDiff() });
 				log("CLIENT tech →", data.techId);
+			});
+			// FABUŁA (fix G6): krok wyzwolony pozycją/akcją KLIENTA mutuje tylko jego lokalny storage
+			// (storyProgression.completedSteps) i po 1s host go nadpisywał. Forward → host dopisuje krok.
+			ST.FH.events.on(state, "story:stepCompleted", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data || !data.stepId) return;
+				net.send({ t: "act", k: "story", id: data.stepId });
+				log("CLIENT story step →", data.stepId);
+			});
+			// KOLEKCJE critterów (fix G6): found/available/bilety żyją w store.creatures/conservatory,
+			// nadpisywanych przez hosta — zbiór klienta cofał się w 100ms. Forward → host dolicza.
+			ST.FH.events.on(state, "entity:collected", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data || !data.typeId) return;
+				net.send({ t: "act", k: "collect", ty: data.typeId });
+				log("CLIENT collect →", data.typeId);
+			});
+			// SYGNAŁY (fix G5): link/unlink klienta mutuje storage "signals" nadpisywany przez hosta →
+			// automatyka klienta znikała po 1s. Forward zmian → host wykonuje FH.signals.link/unlink.
+			ST.FH.events.on(state, "signals:userChanged", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data || !data.changes) return;
+				const ch = data.changes.map((c) => ({ a: c.action, f: c.from && { x: c.from.x, y: c.from.y }, t: c.to && { x: c.to.x, y: c.to.y } })).filter((c) => c.a && c.f && c.t);
+				if (ch.length) { net.send({ t: "act", k: "sig", ch }); log("CLIENT signals →", ch.length, "zmian"); }
+			});
+			// przycisk sygnałowy: toggle stanu przez klienta
+			ST.FH.events.on(state, "signalButton:pressed", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data || !data.structure) return;
+				const s = data.structure;
+				net.send({ t: "act", k: "sbtn", x: s.x, y: s.y, on: !!(s.data && s.data.on) });
+			});
+			// COPY-PASTE blueprintów (fix G5): wklejone struktury klienta były lokalne → reconcile je kasował
+			ST.FH.events.on(state, "structures:pasted", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data || !data.structures) return;
+				const list = data.structures.map(slimStruct);
+				let links = null;
+				try { if (data.signalLinks) links = JSON.parse(JSON.stringify(data.signalLinks)); } catch (e) {}
+				if (list.length) { net.send({ t: "act", k: "paste", list, links }); log("CLIENT paste →", list.length, "struktur"); }
 			});
 			log("Subskrypcja eventów struktur/przedmiotów aktywna");
 		} catch (e) { log("subscribe error:", e.message); }
@@ -1297,8 +1355,15 @@
 				ST._hostDemolRect = { x0: Math.floor(Math.min(start.x, end.x)), y0: Math.floor(Math.min(start.y, end.y)), x1: Math.ceil(Math.max(start.x, end.x)), y1: Math.ceil(Math.max(start.y, end.y)), t: performance.now() };
 				return false; // gra rozbiera normalnie; my tylko posprzątamy po niej
 			}
-			// rury (Pipe) idą w grze osobną funkcją — nie przechwytujemy (na razie lokalnie)
-			try { const sel = ST.FH.action && ST.FH.action.getSelected && ST.FH.action.getSelected(state); if (sel && String(sel.id).toLowerCase().indexOf("pipe") >= 0) return false; } catch (e) {}
+			// rury (Pipe): osobna ścieżka w grze (Zn) — forwardujemy rect, host woła _pipeZn (eksport z patcha)
+			try {
+				const sel = ST.FH.action && ST.FH.action.getSelected && ST.FH.action.getSelected(state);
+				if (sel && String(sel.id).toLowerCase().indexOf("pipe") >= 0) {
+					net.send({ t: "act", k: "pipeRm", x0: Math.floor(Math.min(start.x, end.x)), y0: Math.floor(Math.min(start.y, end.y)), x1: Math.ceil(Math.max(start.x, end.x)), y1: Math.ceil(Math.max(start.y, end.y)) });
+					log("CLIENT pipeRm rect");
+					return true; // pomiń lokalne (host wykona, lustro + snap potwierdzą)
+				}
+			} catch (e) {}
 			const SA = structNs(); if (!SA) { log("_demol: brak API struktur"); return false; }
 			// UWAGA: H(e) zwraca rect JUŻ W KOMÓRKACH (dzieli przez cellSize w środku — snappedMinX/cellSize).
 			// Bug 0.9.28: dzieliliśmy DRUGI raz przez 4 → skan 4x mniejszego obszaru przy originie → zawsze
@@ -1373,6 +1438,83 @@
 						try { ST.FH.events.emit(state, "tech:unlocked", { techId: msg.id, suppressMusic: true }); } catch (e) {}
 						log("HOST: tech klienta odblokowany:", msg.id);
 					}
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "story") {
+				// krok fabuły klienta: dopisz do storyProgression.completedSteps (idempotentnie) + re-emit
+				ST._applyingNet = true;
+				try {
+					const ens = (ST.FH.storage && ST.FH.storage.ensure) || findApi("ensure", ["storage"]);
+					if (ens) {
+						const sp = ens(state, "storyProgression");
+						const arrS = sp.completedSteps || [];
+						if (!arrS.includes(msg.id)) {
+							arrS.push(msg.id); sp.completedSteps = arrS;
+							try { ST.FH.events.emit(state, "story:stepCompleted", { stepId: msg.id }); } catch (e) {}
+							log("HOST: krok fabuły klienta:", msg.id);
+						}
+					} else log("BŁĄD story: brak FH.storage.ensure");
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "collect") {
+				// zbiór crittera przez klienta: found/available + bilety za PIERWSZE złapanie (jak w grze)
+				ST._applyingNet = true;
+				try {
+					state.store.creatures = state.store.creatures || {};
+					const l = state.store.creatures;
+					l[msg.ty] = l[msg.ty] || { available: 0, found: 0 };
+					const c = l[msg.ty], first = c.found === 0;
+					c.found++; c.available++;
+					if (first) {
+						state.store.conservatory = state.store.conservatory || { tickets: 0 };
+						let types = 0; for (const k in l) if (l[k].found > 0) types++;
+						state.store.conservatory.tickets += Math.pow(2, types);
+					}
+					try { ST.FH.events.emit(state, "entity:collected", { typeId: msg.ty }); } catch (e) {}
+					log("HOST: critter klienta zebrany:", msg.ty, first ? "(PIERWSZY — bilety!)" : "");
+					// TODO: encja na mapie hosta nie jest usuwana (brak API) — rzadki podwójny zbiór możliwy
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "sig") {
+				// zmiany sygnałów klienta: wykonaj przez FH.signals.link/unlink (autorytatywnie)
+				ST._applyingNet = true;
+				try {
+					const SG = ST.FH.signals;
+					if (SG && SG.link && SG.unlink) {
+						for (const c of msg.ch || []) {
+							try { if (c.a === "link") SG.link(state, c.f, c.t); else if (c.a === "unlink") SG.unlink(state, c.f, c.t); } catch (e) {}
+						}
+						try { ST.FH.events.emit(state, "signals:userChanged", { changes: (msg.ch || []).map((c) => ({ action: c.a, from: c.f, to: c.t })) }); } catch (e) {}
+						log("HOST: sygnały klienta:", (msg.ch || []).length, "zmian");
+					} else log("BŁĄD sig: brak FH.signals.link/unlink — klucze:", SG ? Object.keys(SG).join(",") : "brak ns");
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "sbtn") {
+				ST._applyingNet = true;
+				try {
+					const SA2 = structNs();
+					const stc = SA2 && SA2.getAtCell(state, msg.x, msg.y);
+					if (stc) {
+						stc.data = Object.assign({}, stc.data || {}, { on: !!msg.on });
+						try { if (ST.FH.signals && ST.FH.signals.setAll) ST.FH.signals.setAll(state, { x: msg.x, y: msg.y }, !!msg.on); } catch (e) {}
+						try { ST.FH.events.emit(state, "signalButton:pressed", { structure: stc }); } catch (e) {}
+						log("HOST: przycisk sygnałowy klienta @", msg.x, msg.y, "→", msg.on);
+					}
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "paste") {
+				// wklejka blueprintu klienta: zbuduj wszystko autorytatywnie + odtwórz linki sygnałów
+				ST._applyingNet = true;
+				try {
+					let ok = 0;
+					for (const s of msg.list || []) if (buildOne(state, s, true)) ok++;
+					if (msg.links && ST.FH.signals && ST.FH.signals.link) {
+						for (const l of msg.links) { try { if (l && l.from && l.to) ST.FH.signals.link(state, l.from, l.to); } catch (e) {} }
+					}
+					net.send({ t: "st", k: "add", list: msg.list });
+					log("HOST: paste klienta —", ok + "/" + (msg.list || []).length, "struktur");
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "pipeRm") {
+				// rozbiórka rur klienta: wołamy PRAWDZIWĄ funkcję gry (Zn z modułu demolish, eksport z patcha)
+				ST._applyingNet = true;
+				try {
+					if (typeof ST._pipeZn === "function") { ST._pipeZn(state, { x: msg.x0, y: msg.y0 }, { x: msg.x1, y: msg.y1 }); log("HOST: rury klienta rozebrane w recie"); }
+					else log("BŁĄD pipeRm: brak _pipeZn (patch 'demolish module exports' nie nałożony?)");
 				} finally { ST._applyingNet = false; }
 			} else if (msg.k === "vac") {
 				hostHarvestVacuum(msg, fromId);
@@ -2048,6 +2190,11 @@
 			if (!ST.wsx.everApplied && !ST.wsx.mismatchLogged && ST.peers.size > 0 && now - (ST._waitHintT || 0) > 3000) {
 				ST._waitHintT = now;
 				setStatus(t("waiting_world"), "#fd5");
+			}
+			// zator lustra (fix G4): działało, a od >4s nic nie przychodzi i host NIE zgłasza pauzy → pokaż ile czekamy
+			if (ST.wsx.everApplied && !ST._hostPausedShown && ST._lastWcT && now - ST._lastWcT > 4000 && now - (ST._stallHintT || 0) > 2000) {
+				ST._stallHintT = now;
+				setStatus(t("sync_stalled", Math.round((now - ST._lastWcT) / 1000)), "#fd5");
 			}
 		}
 		drawGhosts(state);

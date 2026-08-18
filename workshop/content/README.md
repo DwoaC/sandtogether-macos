@@ -9,19 +9,27 @@ Polska instrukcja: zobacz `INSTRUKCJA.md`.
 
 ## Installation — ONCE, ever
 
-**Windows:**
+### Windows
+
 1. Have Sandustry installed from Steam (launch it once normally).
 2. Right-click `install.bat` → **Run** (or `install.ps1` → Run with PowerShell;
    if Windows blocks it: `powershell -ExecutionPolicy Bypass -File install.ps1`).
 3. Launch the game — the **SandTogether** panel appears in the top-right corner.
 
-**macOS:**
+### macOS (community-contributed by DwoaC, tested on Apple Silicon)
+
 1. Have Sandustry installed from Steam (launch it once normally).
-2. Open Terminal and run: `bash "<this folder>/install-macos.command"`
-   (or right-click the file → Open; if macOS blocks it: System Settings →
-   Privacy & Security → Open Anyway). No dependencies — the installer uses
-   the game's own engine.
-3. Launch the game from Steam — same panel, same features.
+2. Double-click `install.command` (or run it in Terminal; pass the path to
+   `Sandustry.app` as an argument if your Steam library is somewhere unusual).
+   No Node.js needed — it runs on the game's own Electron runtime.
+3. Launch the game with `SandTogether-Launch.command` — it re-installs the mod
+   automatically if a Steam update reverted it, then starts the game through
+   Steam.
+
+> **macOS note:** LAN co-op is fully verified (`ip:27777`; same network or a
+> VPN like Tailscale). Steam friend invites got a fix in v0.9.41 (the macOS
+> Steam library reports callback fields differently) — please report whether
+> they work for you now.
 
 **That's it — forever.** Since v0.9.39 the mod **auto-updates itself** at every game
 launch from your Workshop subscription (the game restarts once when it does).
@@ -65,10 +73,14 @@ You never run the installer again, and both players always match versions.
 Don't rely on saving the game while connected as a client — your save captures
 the world from the moment you joined. The host's save is the authoritative one.
 
+After a **Steam game update** the mod may be reverted — just launch the game:
+the auto-updater re-installs it (macOS: or launch via `SandTogether-Launch.command`).
+
 ## Uninstall
 
 Steam → Sandustry → Properties → Installed Files → Verify integrity of game files,
-then delete the `resources\app` folder.
+then delete the `resources\app` folder
+(macOS: `Sandustry.app/Contents/Resources/app`).
 
 ---
 SandTogether by **Kamil Padula** · source: https://github.com/IronBamBam1990/sandtogether (MIT)

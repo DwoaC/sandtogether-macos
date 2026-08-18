@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.37-beta";
+	const VER = "0.9.38-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -372,6 +372,7 @@
 		net.onMsg(({ from, msg }) => handleMsg(from, msg));
 		net.status().then((s) => {
 			ST.net.role = s.role; ST.net.transport = s.transport;
+			ST._gameFp = s.gameFp || null; // odcisk buildu gry (guard różnych buildów między graczami)
 			for (const p of s.peers) ST.peers.set(p.id, { nick: p.nick, x: 0, y: 0, tx: 0, ty: 0, lastSeen: performance.now() });
 			if (s.role === "host") setStatus("HOST (" + s.transport + ") — gracze: " + (s.peers.length + 1));
 			else if (s.role === "client") setStatus("POŁĄCZONO — gracze: " + (s.peers.length + 1));
@@ -411,7 +412,7 @@
 			p.nick = msg.nick || "?";
 			ST.peers.set(from, p);
 			setStatus(t("players", ST.peers.size + 1));
-			try { net.send({ t: "mver", v: VER }, from); } catch (e) {} // wymiana wersji MODA (PROTO_VER nie łapie różnic 0.9.x)
+			try { net.send({ t: "mver", v: VER, gf: ST._gameFp || null }, from); } catch (e) {} // wersja MODA + odcisk buildu GRY
 			// stary mod (≤0.9.7) nie zna mver i nie odpowie — po 5s bez odpowiedzi ALARM (przypadek "ziomek na 0.9.0")
 			setTimeout(() => {
 				const pp = ST.peers.get(from);
@@ -427,6 +428,11 @@
 				setStatus(t("ver_mismatch") + " [" + ((p && p.nick) || from) + ": " + msg.v + " / you: " + VER + "]", "#f66");
 				log("RÓŻNE WERSJE MODA:", from, "ma", msg.v, "— ja mam", VER);
 			} else log("wersja moda OK u", (p && p.nick) || from, "->", msg.v);
+			// odcisk buildu GRY (guard R3): różne buildy = różne enumy elementów/kotwice → ostrzeż zamiast cichej korupcji
+			if (msg.gf && ST._gameFp && msg.gf !== ST._gameFp) {
+				setStatus("⚠ DIFFERENT GAME BUILDS! [" + ((p && p.nick) || from) + "] — update the game on both sides", "#f66");
+				log("RÓŻNE BUILDY GRY:", from, "ma", msg.gf, "— ja mam", ST._gameFp);
+			}
 		} else if (msg.t === "wi") {
 			if (ST.net.role === "client" && ST.state && ST.wsx.paused) { ST._applyingNet = true; try { applyWorldItems(ST.state, msg.wi); } finally { ST._applyingNet = false; } }
 		} else if (msg.t === "chat") {
@@ -560,7 +566,7 @@
 		if (!W) return;
 		const d = chunkDims(W, H);
 		for (let i = 0; i < d.cx * d.cy; i++) ST.wsx.pending.add(i);
-		if (ST.wsx.hashes) ST.wsx.hashes.clear(); // pełny re-send: hash-skip nie może pomijać "niezmienionych" (nowy klient ich nie ma)
+		if (ST.wsx.rowH) ST.wsx.rowH.clear(); // pełny re-send: row-delta nie może pomijać "niezmienionych" wierszy (nowy klient ich nie ma)
 		log("Pełny świat zakolejkowany:", d.cx * d.cy, "chunków");
 	}
 
@@ -627,31 +633,56 @@
 					}
 					if (fogged) { fogSkipped++; continue; }
 				}
-				const buf = new Uint8Array(6 + cw * ch * 12);
+				// ROW-DELTA v5: hash per WIERSZ (12*cw bajtów przez 6 warstw); wysyłamy tylko zmienione wiersze.
+				// Poziomy ruch (woda w kanale, taśmy) = 1-3 wiersze zamiast całych 40 → 2-10x mniej pasma.
+				// Pamięć: 9216 chunków × 40 × 4B ≈ 1,5 MB. Pełny re-send = rowH.clear() w enqueueFullWorld.
+				if (!w.rowH) w.rowH = new Map();
+				let rh = w.rowH.get(idx);
+				if (!rh || rh.length < ch) { rh = new Uint32Array(CHUNK); rh.fill(0); w.rowH.set(idx, rh); }
+				const etRows = new Uint8Array(cw * ch); // warstwa typu elementu liczona raz (hash + zapis)
+				if (cellIds32 && etype) {
+					for (let r = 0; r < ch; r++) for (let cc = 0; cc < cw; cc++) {
+						const cid = cellIds32[(y0 + r) * W + x0 + cc];
+						etRows[r * cw + cc] = (cid >= ELEMENTS_MIN && cid <= ELEMENTS_MAX) ? (etype[cid - ELEMENTS_MIN] || 0) & 0xff : 0;
+					}
+				}
+				const fnvRow = (r) => {
+					let h = 0x811c9dc5;
+					const m0 = ((y0 + r) * W + x0) * 4, s0 = (y0 + r) * W + x0;
+					for (let i = 0; i < cw * 4; i++) { h ^= map[m0 + i]; h = (h * 0x01000193) >>> 0; }
+					for (let i = 0; i < cw; i++) { h ^= wall[s0 + i]; h = (h * 0x01000193) >>> 0; }
+					if (shadow) for (let i = 0; i < cw; i++) { h ^= shadow[s0 + i]; h = (h * 0x01000193) >>> 0; }
+					if (auth) for (let i = 0; i < cw; i++) { h ^= auth[s0 + i]; h = (h * 0x01000193) >>> 0; }
+					if (sim) { const sb = new Uint8Array(sim.buffer, sim.byteOffset + s0 * 4, cw * 4); for (let i = 0; i < cw * 4; i++) { h ^= sb[i]; h = (h * 0x01000193) >>> 0; } }
+					for (let i = 0; i < cw; i++) { h ^= etRows[r * cw + i]; h = (h * 0x01000193) >>> 0; }
+					return h === 0 ? 1 : h; // 0 zarezerwowane = "nigdy nie wysłany"
+				};
+				const mask = new Uint8Array(5); // 40 bitów
+				const rows = [];
+				for (let r = 0; r < ch; r++) {
+					const h = fnvRow(r);
+					if (rh[r] !== h) { rh[r] = h; mask[r >> 3] |= 1 << (r & 7); rows.push(r); }
+				}
+				if (!rows.length) continue; // nic się nie zmieniło w chunku
+				const buf = new Uint8Array(11 + rows.length * cw * 12);
 				const dv = new DataView(buf.buffer);
 				dv.setUint16(0, ccx, true); dv.setUint16(2, ccy, true);
 				buf[4] = cw; buf[5] = ch;
-				let o = 6;
-				for (let r = 0; r < ch; r++) { const src = ((y0 + r) * W + x0) * 4; buf.set(map.subarray(src, src + cw * 4), o); o += cw * 4; }
-				for (let r = 0; r < ch; r++) { const src = (y0 + r) * W + x0; buf.set(wall.subarray(src, src + cw), o); o += cw; }
-				for (let r = 0; r < ch; r++) { const src = (y0 + r) * W + x0; if (shadow) buf.set(shadow.subarray(src, src + cw), o); o += cw; }
-				for (let r = 0; r < ch; r++) { const src = (y0 + r) * W + x0; if (auth) buf.set(auth.subarray(src, src + cw), o); o += cw; }
-				for (let r = 0; r < ch; r++) { const src = (y0 + r) * W + x0; if (sim) buf.set(new Uint8Array(sim.buffer, sim.byteOffset + src * 4, cw * 4), o); o += cw * 4; }
-				// warstwa typu elementu (1 B/komórkę): cellId∈[MIN,MAX] → etype[cellId-MIN], inaczej 0. Naprawia grabbera u klienta.
-				for (let r = 0; r < ch; r++) { for (let cc = 0; cc < cw; cc++) { let ty = 0; if (cellIds32 && etype) { const cid = cellIds32[(y0 + r) * W + x0 + cc]; if (cid >= ELEMENTS_MIN && cid <= ELEMENTS_MAX) ty = etype[cid - ELEMENTS_MIN] || 0; } buf[o++] = ty & 0xff; } }
-				// hash-skip: identyczna zawartość jak przy ostatniej wysyłce → nie wysyłaj (FNV-1a nad bajtami chunka)
-				let hh = 0x811c9dc5;
-				for (let i = 6; i < buf.length; i++) { hh ^= buf[i]; hh = (hh * 0x01000193) >>> 0; }
-				if (!w.hashes) w.hashes = new Map();
-				if (w.hashes.get(idx) === hh) continue;
-				w.hashes.set(idx, hh);
+				buf.set(mask, 6);
+				let o = 11;
+				for (const r of rows) { const src = ((y0 + r) * W + x0) * 4; buf.set(map.subarray(src, src + cw * 4), o); o += cw * 4; }
+				for (const r of rows) { const src = (y0 + r) * W + x0; buf.set(wall.subarray(src, src + cw), o); o += cw; }
+				for (const r of rows) { const src = (y0 + r) * W + x0; if (shadow) buf.set(shadow.subarray(src, src + cw), o); o += cw; }
+				for (const r of rows) { const src = (y0 + r) * W + x0; if (auth) buf.set(auth.subarray(src, src + cw), o); o += cw; }
+				for (const r of rows) { const src = (y0 + r) * W + x0; if (sim) buf.set(new Uint8Array(sim.buffer, sim.byteOffset + src * 4, cw * 4), o); o += cw * 4; }
+				for (const r of rows) { buf.set(etRows.subarray(r * cw, r * cw + cw), o); o += cw; }
 				parts.push(buf); size += buf.length;
 			}
 			if (!parts.length) { w.busy = false; return; }
 			const all = new Uint8Array(size);
 			let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
 			const packed = await deflate(all);
-			net.send({ t: "wc", v: 4, wid: state.store.meta && state.store.meta.worldId, scene: state.store.scene && state.store.scene.active, W, H, n: parts.length, d: b64enc(packed) });
+			net.send({ t: "wc", v: 5, wid: state.store.meta && state.store.meta.worldId, scene: state.store.scene && state.store.scene.active, W, H, n: parts.length, d: b64enc(packed) });
 			// statystyki
 			w.applyBytes += packed.length; w.applyCount += parts.length;
 			w.fogSkipped = (w.fogSkipped || 0) + fogSkipped;
@@ -708,7 +739,7 @@
 			if (!ST.wsx.mismatchLogged) { ST.wsx.mismatchLogged = true; log("REJECT world: dims host=" + msg.W + "x" + msg.H + " me=" + W + "x" + H + " map=" + (!!map)); }
 			return;
 		}
-		if (msg.v !== 4) { setStatus(t("ver_mismatch"), "#f66"); return; } // v4 = doszła warstwa elementData.type (grabber)
+		if (msg.v !== 5) { setStatus(t("ver_mismatch"), "#f66"); return; } // v5 = row-delta (maska zmienionych wierszy per chunk)
 		if (ST.wsx.mismatchLogged) { ST.wsx.mismatchLogged = false; log("World MATCH — lustro rusza"); }
 		ST.wsx.mismatchWarned = false;
 		setClientPaused(true);
@@ -720,16 +751,21 @@
 		while (o + 6 <= raw.length) {
 			const ccx = dv.getUint16(o, true), ccy = dv.getUint16(o + 2, true);
 			const cw = raw[o + 4], ch = raw[o + 5];
-			o += 6;
+			// v5 ROW-DELTA: 5-bajtowa maska wierszy; w streamie są TYLKO zaznaczone wiersze (reszta bez zmian)
+			if (o + 11 > raw.length) break;
+			const mask = raw.subarray(o + 6, o + 11);
+			o += 11;
 			const x0 = ccx * CHUNK, y0 = ccy * CHUNK;
-			if (o + cw * ch * 12 > raw.length) break; // uszkodzony batch
-			for (let r = 0; r < ch; r++) { const dst = ((y0 + r) * W + x0) * 4; map.set(raw.subarray(o, o + cw * 4), dst); o += cw * 4; }
-			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; wall.set(raw.subarray(o, o + cw), dst); o += cw; }
-			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; if (shadow) shadow.set(raw.subarray(o, o + cw), dst); o += cw; }
-			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; if (auth) auth.set(raw.subarray(o, o + cw), dst); o += cw; }
-			for (let r = 0; r < ch; r++) { const dst = (y0 + r) * W + x0; if (sim) new Uint8Array(sim.buffer, sim.byteOffset + dst * 4, cw * 4).set(raw.subarray(o, o + cw * 4)); o += cw * 4; }
+			const rows = [];
+			for (let r = 0; r < ch; r++) if (mask[r >> 3] & (1 << (r & 7))) rows.push(r);
+			if (o + rows.length * cw * 12 > raw.length) break; // uszkodzony batch
+			for (const r of rows) { const dst = ((y0 + r) * W + x0) * 4; map.set(raw.subarray(o, o + cw * 4), dst); o += cw * 4; }
+			for (const r of rows) { const dst = (y0 + r) * W + x0; wall.set(raw.subarray(o, o + cw), dst); o += cw; }
+			for (const r of rows) { const dst = (y0 + r) * W + x0; if (shadow) shadow.set(raw.subarray(o, o + cw), dst); o += cw; }
+			for (const r of rows) { const dst = (y0 + r) * W + x0; if (auth) auth.set(raw.subarray(o, o + cw), dst); o += cw; }
+			for (const r of rows) { const dst = (y0 + r) * W + x0; if (sim) new Uint8Array(sim.buffer, sim.byteOffset + dst * 4, cw * 4).set(raw.subarray(o, o + cw * 4)); o += cw * 4; }
 			// warstwa typu elementu: wpisz do elementData.type[cellId-MIN] żeby getResolvedTypeFromCellId działało (grabber)
-			for (let r = 0; r < ch; r++) { for (let cc = 0; cc < cw; cc++) { const ty = raw[o++]; if (etype && cellIds32) { const cid = cellIds32[(y0 + r) * W + x0 + cc]; if (cid >= ELEMENTS_MIN && cid <= ELEMENTS_MAX) etype[cid - ELEMENTS_MIN] = ty; } } }
+			for (const r of rows) { for (let cc = 0; cc < cw; cc++) { const ty = raw[o++]; if (etype && cellIds32) { const cid = cellIds32[(y0 + r) * W + x0 + cc]; if (cid >= ELEMENTS_MIN && cid <= ELEMENTS_MAX) etype[cid - ELEMENTS_MIN] = ty; } } }
 			applied++;
 		}
 		// Ochrona grabbera: lustro mogło przynieść STARĄ zawartość komórki (host jeszcze nie przetworzył
@@ -902,8 +938,8 @@
 			// nadpisywanych przez hosta — zbiór klienta cofał się w 100ms. Forward → host dolicza.
 			ST.FH.events.on(state, "entity:collected", (st, data) => {
 				if (ST._applyingNet || ST.net.role !== "client" || !data || !data.typeId) return;
-				net.send({ t: "act", k: "collect", ty: data.typeId });
-				log("CLIENT collect →", data.typeId);
+				net.send({ t: "act", k: "collect", ty: data.typeId, eid: data.entityId });
+				log("CLIENT collect →", data.typeId, "(id " + data.entityId + ")");
 			});
 			// SYGNAŁY (fix G5): link/unlink klienta mutuje storage "signals" nadpisywany przez hosta →
 			// automatyka klienta znikała po 1s. Forward zmian → host wykonuje FH.signals.link/unlink.
@@ -1596,8 +1632,22 @@
 						state.store.conservatory.tickets += Math.pow(2, types);
 					}
 					try { ST.FH.events.emit(state, "entity:collected", { typeId: msg.ty }); } catch (e) {}
+					// usuń encję z mapy hosta (brak oficjalnego remove — emulacja: splice z ŻYWEJ listy getAll
+					// + schowaj sprite'a getSprite + zgaś światło). Bez tego critter wisiał do 2. zbioru.
+					try {
+						const EN = ST.FH.entities;
+						if (msg.eid != null && EN && EN.getAll) {
+							const listE = EN.getAll(state);
+							const idxE = listE.findIndex((en) => en && en.id === msg.eid);
+							if (idxE >= 0) {
+								const en = listE[idxE];
+								try { if (en.lightIndex !== undefined && ST.FH.effects && ST.FH.effects.removeLight) { ST.FH.effects.removeLight(state, en.lightIndex); en.lightIndex = undefined; } } catch (e) {}
+								try { const spr = EN.getSprite && EN.getSprite(state, en.id); if (spr) { spr.renderable = false; spr.visible = false; } } catch (e) {}
+								listE.splice(idxE, 1);
+							}
+						}
+					} catch (e) {}
 					log("HOST: critter klienta zebrany:", msg.ty, first ? "(PIERWSZY — bilety!)" : "");
-					// TODO: encja na mapie hosta nie jest usuwana (brak API) — rzadki podwójny zbiór możliwy
 				} finally { ST._applyingNet = false; }
 			} else if (msg.k === "sig") {
 				// zmiany sygnałów klienta: wykonaj przez FH.signals.link/unlink (autorytatywnie)

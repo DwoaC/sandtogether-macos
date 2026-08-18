@@ -100,7 +100,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.37-beta — quality-of-life batch: (1) TEAM CHAT in the panel — type, Enter, done (host relays it, so it works with 3-4 players). (2) PER-PLAYER MEMORY: rejoining a world you played before puts you back where you left off, with your inventory — no more respawning as a copy of the host. (3) MACHINE SETTINGS by the joining player (filters, priorities, any machine UI config) now stick — they used to silently revert. (4) 3-4 PLAYER polish: you now see the other CLIENTS\' projectiles and hear their world sounds (host relays them). (5) Item drops appear for everyone instantly instead of after 2.5s. Both players update + re-run install.bat.',
+    changeNote: 'v0.9.38-beta — network & robustness batch: (1) ROW-DELTA world streaming (protocol v5): only changed 40-cell rows are sent instead of whole chunks — typically 2-10x less bandwidth, which directly reduces lag on slower connections. (2) CRITTERS collected by the joining player now disappear from the host\'s map too (no double-collect). (3) STEAM AUTO-REJOIN: if the P2P link drops, the joiner automatically re-enters the lobby (up to 5 tries), same as the LAN reconnect. (4) The panel now warns when the two players run DIFFERENT GAME BUILDS (Steam sometimes serves different builds under the same version number — this caused several mystery bugs). Includes 0.9.37 (chat, per-player memory, machine settings, instant drops). Both players MUST update together (new protocol) + re-run install.bat.',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

@@ -11,6 +11,8 @@
 
 const net = require('net');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const TAG = '[SandTogether:net]';
 let fileLog = null;
@@ -206,7 +208,14 @@ function registerSteamCallbacks() {
       log('P2P session accepted:', String(sid64));
     } catch (e) { log('P2PSessionRequest error:', e.message, JSON.stringify(data)); }
   });
-  cb.register(CB.P2PSessionConnectFail, (data) => emitEvent('error', { where: 'p2p', message: 'P2P connect fail', data: safeJson(data) }));
+  cb.register(CB.P2PSessionConnectFail, (data) => {
+    emitEvent('error', { where: 'p2p', message: 'P2P connect fail', data: safeJson(data) });
+    // klient: rejoin dopiero po POWTÓRNYM failu w 10s (pojedynczy chwilowy błąd nie zrywa sesji)
+    const now = Date.now();
+    S._p2pFails = (S._p2pFails || []).filter((t) => now - t < 10000);
+    S._p2pFails.push(now);
+    if (S._p2pFails.length >= 2) { S._p2pFails = []; steamRejoin(1); }
+  });
   cb.register(CB.GameLobbyJoinRequested, async (data) => {
     // Znajomy kliknął "Dołącz" w Steam — dołączamy do lobby hosta.
     try {
@@ -274,10 +283,27 @@ async function hostSteam() {
   return { lobbyId: String(S.lobby.id) };
 }
 
+// AUTO-REJOIN Steam (odpowiednik reconnectu WS): po utracie P2P/hosta próbujemy wrócić do
+// ostatniego lobby co 3s, max 5 razy. Nowe świadome połączenie/Stop zeruje licznik.
+function steamRejoin(attempt) {
+  if (S.role !== 'client' || S.transport !== 'steam' || !S.lastLobbyId) return;
+  if (S._rejoinPending) return; // jedna pętla naraz
+  if (attempt > 5) { emitEvent('error', { where: 'steam-rejoin', message: 'rejoin failed after 5 tries' }); return; }
+  S._rejoinPending = true;
+  setTimeout(async () => {
+    S._rejoinPending = false;
+    if (S.role !== 'client' || S.transport !== 'steam') return;
+    log('Steam rejoin próba', attempt, '/5 → lobby', S.lastLobbyId);
+    emitEvent('reconnecting', { transport: 'steam', attempt });
+    try { await joinSteamLobby(S.lastLobbyId); } catch (e) { steamRejoin(attempt + 1); }
+  }, 3000);
+}
+
 async function joinSteamLobby(lobbyIdStr) {
   if (!S.steam) throw new Error('Steam client niedostępny');
   stopNetworking('restart');
   S.role = 'client'; S.transport = 'steam';
+  S.lastLobbyId = lobbyIdStr;
   S.lobby = await S.steam.matchmaking.joinLobby(BigInt(lobbyIdStr));
   const owner = S.lobby.getOwner();
   const sid = String(owner.steamId64 !== undefined ? owner.steamId64 : owner);
@@ -343,6 +369,23 @@ function stopNetworking(reason) {
 
 function safeJson(o) { try { return JSON.parse(JSON.stringify(o, (k, v) => typeof v === 'bigint' ? String(v) : v)); } catch (e) { return String(o); } }
 
+// Odcisk buildu GRY (rozmiar bundle + sha1 pierwszych 256KB): Steam potrafi serwować różnym ludziom
+// różne buildy o tym samym numerze wersji — różne enumy/kotwice. Porównywany przy wymianie mver.
+let _gameFpCache;
+function gameFingerprint() {
+  if (_gameFpCache !== undefined) return _gameFpCache;
+  try {
+    const p = path.join(__dirname, 'dist', 'js', 'bundle.js');
+    const st = fs.statSync(p);
+    const fd = fs.openSync(p, 'r');
+    const buf = Buffer.alloc(Math.min(262144, st.size));
+    fs.readSync(fd, buf, 0, buf.length, 0);
+    fs.closeSync(fd);
+    _gameFpCache = st.size + '-' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 10);
+  } catch (e) { _gameFpCache = null; }
+  return _gameFpCache;
+}
+
 // ---------------------------------------------------------------------------
 // Init + IPC
 // ---------------------------------------------------------------------------
@@ -387,6 +430,7 @@ function init(opts) {
     role: S.role, transport: S.transport, myNick: S.myNick, myId: S.myId,
     lobbyId: S.lobby ? String(S.lobby.id) : null,
     peers: [...S.peers.values()].map((p) => ({ id: p.id, kind: p.kind, nick: p.nick })),
+    gameFp: gameFingerprint(),
   }));
   // Tryb autotestu: --st-autotest=host | --st-autotest=join (testy dwóch instancji bez klikania)
   const autotest = process.argv.find((a) => a.startsWith('--st-autotest='));

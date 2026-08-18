@@ -2,6 +2,42 @@
 
 *Translated from the original Polish development journal.*
 
+## 2026-08-18 (v0.9.39-beta) — AUTO-UPDATE from the Workshop (install.bat needed only ONCE, ever)
+
+At every game launch `st-main.js` compares the mod version in `steamapps/workshop/content/2764460/<item>/src` (kept fresh by Steam) with the installed one (numeric compare — the author's newer local build is never downgraded). Newer → copies `sandtogether.js`/`st-main.js`, appends the preload bridge if missing, applies `patches.json` to `bundle.js` (a port of install.ps1's idempotent variant logic) and relaunches the game once. No relaunch loop (after the update local == workshop). Version drift between players — the #1 cause of "nothing works" reports — now solves itself.
+
+## 2026-08-18 (v0.9.37 + v0.9.38) — the whole nice-to-have list delivered
+
+**0.9.37**: per-player profile (localStorage keyed by trusted host worldId: position + inventory, saved every 10 s and on disconnect/stop, restored when the mirror starts); machine-config sync (no game event exists, so a 0.8 s JSON-diff scan within 48 cells of the player detects `structure.data` edits → `act:sdata` → host applies + propagates; 6 s protection window against the snapshot reverting the fresh edit); team chat (panel input with keystroke isolation, textContent-only rendering, host relays between clients); host now relays `chat`/`myproj`/`snd` for 3-4 player sessions; instant item drops (host pushes the worldItems list whenever its id set changes, checked at 5 Hz).
+
+**0.9.38**: ROW-DELTA world protocol v5 — per-row FNV hashes (~1.5 MB host RAM) select only changed 40-cell rows; a chunk is header + 5-byte row mask + selected rows × 6 layers (12 B/cell); typically 2-10× less bandwidth (horizontal flow = 1-3 rows instead of 40). Replaces the whole-chunk hash-skip; `enqueueFullWorld` clears the row hashes so new joiners get everything. Critters collected by the client are now removed from the host's map too (splice from the live `FH.entities.getAll` array + hide sprite + remove light — no official remove API). Steam auto-rejoin: 2 P2P connect-fails within 10 s → rejoin the last lobby every 3 s, max 5 tries. Game-build fingerprint (bundle size + sha1 of the first 256 KB) exchanged in `mver` — mismatched game builds now warn in red instead of silently corrupting element enums.
+
+## 2026-08-18 (v0.9.36-beta) — optimization: fog-skip + LAN auto-reconnect
+
+World stream skips chunks whose shadowMap is fully 255 (undiscovered — the client sees black there anyway; 255 = undiscovered confirmed in the bundle). Revealing changes the shadow → chunk dirties → streams normally. Initial fill on a big map (9216 chunks, ~20-30% discovered) = joining 2-4× faster. WS auto-reconnect: retry every 3 s, max 5 attempts; the counter rides the `joinWs(_retry)` parameter so it survives socket instances; a successful handshake resets the budget.
+
+## 2026-08-18 (v0.9.34 + v0.9.35) — SHARED research pool + closing the "partial/one-way" list
+
+**0.9.34 (G2)**: upgrades/tech = SHARED TEAM POOL. Client hooks `upgrade:purchased`/`tech:unlocked`; the real cost is computed as the resource diff vs the last host snapshot (re-based per purchase). Host sets the levels, deducts costs authoritatively (store.resources + gold/energy SABs, clamped) and re-emits. The res packet carries upgrades/tech/progression; the client merges levels only upward (no flicker while an act is in flight).
+
+**0.9.35 (items 1-5)**: pipe demolition by the client (a bundle patch exports the game's own pipe-demolish fn on window; client forwards the rect, host calls it); story steps triggered by the client (host appends to `storyProgression.completedSteps`, idempotent); critter collection by the client (store.creatures counters + first-catch conservatory tickets, 1:1 with the game's logic); signals (link/unlink → `FH.signals`), signal buttons and blueprint copy-paste executed by the host; host-pause heartbeat (a 1 s setInterval survives the paused sim → the joiner sees "Host paused — world frozen" plus a stall indicator); fast rejoin (`_lastGoodWid` survives sessions — reconnecting to the same host world is trusted immediately, no save re-transfer).
+
+## 2026-08-18 (v0.9.29 – v0.9.33) — live-debug session: client demolish + the red undeletable blocks
+
+0.9.29: hotfix — the demolisher rect from `H(e)` is already in cell coordinates; 0.9.28 divided by cellSize again, scanning a wrong 4× smaller area and silently doing nothing ("nothing happens, no log" — TCentraL). Every `_demol` code path now logs. 0.9.30-0.9.33: the red undeletable blocks turned out to be **orphaned foundation tiles** — the structure object was long gone but its tiles (terrain Block=15..SlidingBlockRight=18) stayed written in the world, and the game only clears tiles when demolishing a live structure. The post-demolish sweep now detects building tiles with NO live structure at that cell and removes them via `FH.terrains.removeAt` (healthy foundations are never touched). Confirmed live: 112 tiles cleaned across 3 stuck blocks. Works solo, host and co-op.
+
+## 2026-08-18 (v0.9.28) — client demolish, foundation data, factory-process sync (TCentraL's reports)
+
+(1) Demolishing as the joining player only recolored structures red: the actual removal ran inside the paused local simulation and never executed. New `_demol` bundle hook intercepts the demolisher drag (unique anchor in the tool tick's End branch), resolves affected structures from the mirrored store via getAtCell over the selection rect and sends them through the existing act:demolish channel. (2) Foundations (incl. sloped) placed by the joiner could not be deleted even by the host: `ST._place` dropped the structure's `data` (shape/box/color), so the host built a degenerate copy. Data is now JSON-cloned and forwarded. (3) "Shake Wet Sand" is a factory process whose counters live in the `factory.processing` SAB — never covered by the mirror, so the joiner always saw zero progress. The host now streams the counters in the 1 Hz res packet.
+
+## 2026-08-17/18 (v0.9.26 – v0.9.27) — Knight-HD's pull request merged + review hardening
+
+Merged PR #1 by **Knight-HD** (dkdknight): `_place` bundle hook (the game turned building placement into a non-cancelable interceptor; numeric structure types were silently dropped — this was "can delete but not build"), host-side grabber rework, mirror protocol v4 (+1 B/cell element type), teammate build ghosts & grabber crosshairs, dirty-cell priority lane, additive reconcile, "0.5.4" anchors. Review hardening on top (0.9.27): a `_grab` anchor variant for our Steam build (Steam serves different builds to different people — his anchors matched 0× here), world-trust reset between sessions, staged ghost cleanup (delete only after 3 consecutive absent snapshots + 30 s grace) instead of never deleting, capacity-aware grab harvesting and a per-peer host rate limit.
+
+## 2026-08-17/18 (v0.9.8 – v0.9.9) — mod-version exchange
+
+The version-mismatch warning only reacted to protocol changes, so a player on an old mod triggered no alarm (the exact "nothing works" case — one tester was on 0.9.0 without knowing). Players now exchange exact MOD versions on connect (`mver`); a mismatch shows red with both versions, and a peer that doesn't answer within 5 s is flagged as "OLD mod (≤0.9.7)". Also open-sourced the repo (github.com/IronBamBam1990/sandtogether, MIT).
+
 ## 2026-08-17 evening (v0.9.7-beta) — LIVE DEBUG of user's session ("nothing works, my buddy is a spectator")
 
 Diagnosis from the host's live logs (%APPDATA%\Sandustry\logs\main.log) + client/host logs from other players (Downloads/drive-download-20260817T185810Z):

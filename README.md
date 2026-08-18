@@ -8,16 +8,18 @@ Play [Sandustry](https://store.steampowered.com/app/2764460/Sandustry/) together
 
 ## For players
 
-Subscribe on the Workshop, then run `install.bat` from the mod folder once (and again after every game/mod update). Full instructions: [README (EN)](dist-package/README.md) / [INSTRUKCJA (PL)](dist-package/INSTRUKCJA.md).
+Subscribe on the Workshop, then run `install.bat` from the mod folder **once** — since v0.9.39 the mod auto-updates itself from the Workshop folder at every game launch. Full instructions: [README (EN)](dist-package/README.md) / [INSTRUKCJA (PL)](dist-package/INSTRUKCJA.md).
 
 ## Architecture (for contributors)
 
 The game is an Electron app; the simulation is non-deterministic (83× `Math.random` in physics, work-stealing scheduler), so lockstep is impossible. SandTogether is **host-authoritative**:
 
-- **Host** runs the only real simulation and streams the world to clients: dirty 40×40 chunks of `mapData` (RGBA) + `wallData` + `shadowMap` + `authorization` + `sim.cellIds` (collision), 11 B/cell, deflate-compressed, prioritized around player positions (fast lane) with a starvation-free FIFO for the rest and content-hash skipping.
+- **Host** runs the only real simulation and streams the world to clients: dirty 40×40 chunks of `mapData` (RGBA) + `wallData` + `shadowMap` + `authorization` + `sim.cellIds` (collision) + element types, 12 B/cell, **row-delta encoded** (per-row FNV hashes → only changed 40-cell rows are sent, protocol v5), deflate-compressed, prioritized around player positions (fast lane) with a starvation-free FIFO for the rest; fully fogged chunks are skipped until revealed.
 - **Client** simulation is paused (manager opcode `SetPaused`); rendering stays alive and reads the mirrored buffers every frame. A re-pause heartbeat protects against the game's own unpause paths (ESC menu).
 - **Client actions** (dig, build, demolish, move, vacuum, grabber, flamethrower, cryoblaster, spray, guns…) are captured via small string-patches in `bundle.js` (see `src/patches.json`, multi-version anchor variants) plus game event hooks, forwarded to the host, replayed there authoritatively, and confirmed back through the world stream.
-- **Transports**: Steam P2P (lobbies, invites, `+connect_lobby`, lobby-ID clipboard join) and a dependency-free WebSocket (LAN). Networking lives in the Electron main process (`src/st-main.js`) because the renderer reloads between scenes.
+- **Transports**: Steam P2P (lobbies, invites, `+connect_lobby`, lobby-ID clipboard join) and a dependency-free WebSocket (LAN), both with auto-reconnect. Networking lives in the Electron main process (`src/st-main.js`) because the renderer reloads between scenes.
+- **Shared progression**: research/upgrade pool, tech tree, story steps, critter collection and factory-process counters are host-authoritative and synced at 1 Hz; client purchases forward the real cost (resource diff) for the host to deduct.
+- **Auto-update**: at every game launch `st-main.js` compares the mod version in the Steam Workshop folder with the installed one; a newer Workshop copy is installed (files + bundle patches) and the game relaunches once. The author's newer local build is never downgraded.
 
 ### Repo layout
 

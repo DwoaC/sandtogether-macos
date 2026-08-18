@@ -6,7 +6,7 @@ tags: [porting, plan, macos]
 use_when:
   - starting a work session on this repo and choosing what to do next
   - writing a design spec for any port work item
-timestamp: 2026-08-18T23:59:00Z
+timestamp: 2026-08-19T01:00:00Z
 ---
 
 # macOS port plan
@@ -44,7 +44,16 @@ port is about installation, launch, paths, and anchor verification. Order:
    In-game Invite button remains dead on mac (overlay —
    [invite-button-overlay-macos](../gotchas/invite-button-overlay-macos.md)).
    Cross-platform vs Windows still untested.
-7. **Player docs** — macOS README section; upstream keeps EN + PL.
+7. **Player docs** — ✅ DONE: EN in PR #2; upstream author added the PL
+   INSTRUKCJA notes himself post-merge.
+
+**UPSTREAMED 2026-08-18:** PR #2 (installer/launcher/docs) and PR #3
+(snake_case invite-join fix) both merged the same day. macOS support is
+now official; next Workshop publish ships it to subscribers. Remaining
+ideas: darwin Invite-button UX
+([invite-button-overlay-macos](../gotchas/invite-button-overlay-macos.md)),
+the two small upstream bugs (mver false alarm, red blocks), and
+cross-platform mac↔Windows testing.
 
 Knowledge impact: every step that verifies an "unverified" claim in the
 gotcha concepts updates that concept in the same session.

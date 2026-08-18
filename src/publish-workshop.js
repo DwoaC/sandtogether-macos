@@ -93,7 +93,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.33-beta — CONFIRMED LIVE: the red undeletable blocks are gone. They turned out to be ORPHANED TILES — the structure object was long gone, but its foundation tiles stayed written in the world, and the game only clears tiles when demolishing a live structure. The demolisher sweep now detects and removes such orphaned building tiles directly (verified in a live session: 112 tiles cleaned across 3 stuck blocks). Works solo and in co-op; healthy foundations are never touched. Plus a log-noise cleanup. Update + re-run install.bat.',
+    changeNote: 'v0.9.34-beta — RESEARCH & UPGRADES ARE NOW SHARED (fixes Warlow\'s report)! Until now the joining player\'s upgrade/tech purchases were free (the cost bounced back within a second), invisible to the host, and host purchases never reached the joiner. Now the whole team shares one pool: any player\'s upgrade or tech unlock is applied by the host authoritatively (cost deducted for real) and synced to everyone within a second — including the tech tree, upgrade levels and progression unlocks, so hover/tooltips work for the joiner too. Also includes 0.9.32-33: the red undeletable blocks (orphaned foundation tiles) are cleaned by the demolisher — confirmed live, 112 tiles removed. Both players update + re-run install.bat.',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

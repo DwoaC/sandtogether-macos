@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.33-beta";
+	const VER = "0.9.34-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -739,6 +739,33 @@
 				net.send({ t: "act", k: "grabPlace", x: data.x, y: data.y, et: data.elementType });
 				grabSetLocal(state, data.x, data.y); // zablokuj ponowne celowanie w tę komórkę (patrz komentarz przy grabSetLocal)
 			});
+			// ULEPSZENIA I TECH TREE — model WSPÓLNEJ PULI (jedna fabryka = wspólne odblokowania).
+			// Zakup klienta: gra mutuje jego lokalny store i odejmuje surowce TYLKO lokalnie (za 1s host
+			// by to nadpisał = zakup darmowy i niewidoczny dla hosta — luka G2). Forward: koszt liczymy
+			// z różnicy zasobów vs ostatni snapshot hosta (event odpala się TUŻ po odjęciu).
+			const resCostDiff = () => {
+				const cost = {};
+				try {
+					const cur = state.store.resources || {};
+					const base = ST._resSnapshot || {};
+					for (const k of Object.keys(base)) {
+						const b = base[k], c = cur[k];
+						if (typeof b === "number" && typeof c === "number" && c < b) cost[k] = b - c;
+					}
+					ST._resSnapshot = Object.assign({}, cur); // re-baza (kilka zakupów w <1s liczy się poprawnie)
+				} catch (e) {}
+				return cost;
+			};
+			ST.FH.events.on(state, "upgrade:purchased", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data) return;
+				net.send({ t: "act", k: "upg", it: data.itemId, ug: data.upgradeId, lv: data.level, cost: resCostDiff() });
+				log("CLIENT upgrade →", data.itemId + "." + data.upgradeId, "lvl", data.level);
+			});
+			ST.FH.events.on(state, "tech:unlocked", (st, data) => {
+				if (ST._applyingNet || ST.net.role !== "client" || !data) return;
+				net.send({ t: "act", k: "tech", id: data.techId, cost: resCostDiff() });
+				log("CLIENT tech →", data.techId);
+			});
 			log("Subskrypcja eventów struktur/przedmiotów aktywna");
 		} catch (e) { log("subscribe error:", e.message); }
 	}
@@ -883,12 +910,30 @@
 				st: state.store.mods || null,          // postęp fabuły (storyProgression)
 				gl: state.store.gloom || null,          // stan gloomu
 				fp: fpCounters(state),                  // liczniki procesów fabryki (ShakeWetSand itd.) — SAB nie-lustrzany
+				up: state.store.upgrades || null,       // WSPÓLNA pula ulepszeń (fix G2)
+				th: (state.store.player && state.store.player.tech) || null, // tech tree
+				pg: state.store.progression || null,    // progression (upgradesUnlocked, dungeons)
 			});
 		} catch (e) {}
 	}
 	// Liczniki "factory.processing" (SAB per-instancja, NIE objęty lustrem świata!): postęp procesów
 	// ShakeWetSand/PressBurntResidue/GrowFlowers/CondenseFlorin. Bez streamu klient widział 0 postępu
 	// ("shaking wet sand aint working" — TCentraL: proces DZIAŁAŁ na hoście, ale UI klienta martwe).
+	// Odejmij koszty zakupu klienta (wspólna pula). Sanity: tylko liczby 0..1e9, clamp do zera.
+	// Gold żyje też w SAB (shared.gold) — odejmujemy w obu miejscach, żeby UI się zgadzało.
+	function deductCosts(state, cost) {
+		if (!cost) return;
+		try {
+			const r = state.store.resources || {};
+			for (const k of Object.keys(cost)) {
+				const v = cost[k];
+				if (typeof v !== "number" || !(v > 0) || v > 1e9) continue;
+				if (typeof r[k] === "number") r[k] = Math.max(0, r[k] - v);
+				if (k === "gold") { const g = arr(state.shared.gold); if (g) g[0] = Math.max(0, g[0] - v); }
+				if (k === "energy") { const g = arr(state.shared.energy); if (g) g[0] = Math.max(0, g[0] - v); }
+			}
+		} catch (e) {}
+	}
 	function fpArr(state) { // surowa tablica SAB (do zapisu u klienta)
 		try {
 			const w = ST.FH.workers;
@@ -911,6 +956,22 @@
 			if (msg.st) state.store.mods = msg.st;
 			if (msg.gl) state.store.gloom = msg.gl;
 			if (msg.fp) { const a = fpArr(state); if (a) { const src = msg.fp; for (let i = 0; i < Math.min(a.length, src.length); i++) { try { Atomics.store(a, i, src[i]); } catch (e) { a[i] = src[i]; } } } }
+			// wspólna pula ulepszeń/tech (fix G2): merge poziomów (NIE podmiana obiektów — gra trzyma referencje)
+			if (msg.up && state.store.upgrades) {
+				for (const it of Object.keys(msg.up)) {
+					const src = msg.up[it], dst = state.store.upgrades[it];
+					if (!src || !dst) continue;
+					for (const ug of Object.keys(src)) {
+						const s = src[ug], d = dst[ug];
+						// tylko W GÓRĘ: świeży zakup klienta nie może mrugnąć w dół zanim host przetworzy act (upgrade'y nie spadają)
+						if (s && d && typeof s.level === "number" && s.level > (d.level || 0)) { d.level = s.level; d.availableLevel = Math.max(d.availableLevel || 0, s.availableLevel != null ? s.availableLevel : s.level); }
+					}
+				}
+			}
+			if (msg.th && state.store.player && state.store.player.tech) {
+				for (const k of Object.keys(msg.th)) if (msg.th[k]) state.store.player.tech[k] = msg.th[k];
+			}
+			if (msg.pg && state.store.progression) Object.assign(state.store.progression, msg.pg);
 				ST._resSnapshot = Object.assign({}, state.store.resources); // re-baza dla przyrostów klienta (dotNine)
 		} catch (e) {}
 	}
@@ -1291,6 +1352,28 @@
 				ST._applyingNet = true;
 				try { for (const s of msg.list) removeOne(state, s); } finally { ST._applyingNet = false; }
 				net.send({ t: "st", k: "rm", list: msg.list });
+			} else if (msg.k === "upg") {
+				// zakup ulepszenia klienta (wspólna pula): ustaw poziom + odejmij koszt autorytatywnie
+				ST._applyingNet = true;
+				try {
+					const u = state.store.upgrades && state.store.upgrades[msg.it] && state.store.upgrades[msg.it][msg.ug];
+					if (u) {
+						if (typeof msg.lv === "number" && msg.lv > (u.level || 0)) { u.availableLevel = msg.lv; u.level = msg.lv; }
+						deductCosts(state, msg.cost);
+						try { ST.FH.events.emit(state, "upgrade:purchased", { itemId: msg.it, upgradeId: msg.ug, level: msg.lv }); } catch (e) {}
+						log("HOST: upgrade klienta", msg.it + "." + msg.ug, "→ lvl", msg.lv);
+					} else log("HOST: upgrade klienta NIEZNANY:", msg.it, msg.ug);
+				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "tech") {
+				ST._applyingNet = true;
+				try {
+					if (state.store.player && state.store.player.tech && !state.store.player.tech[msg.id]) {
+						state.store.player.tech[msg.id] = true;
+						deductCosts(state, msg.cost);
+						try { ST.FH.events.emit(state, "tech:unlocked", { techId: msg.id, suppressMusic: true }); } catch (e) {}
+						log("HOST: tech klienta odblokowany:", msg.id);
+					}
+				} finally { ST._applyingNet = false; }
 			} else if (msg.k === "vac") {
 				hostHarvestVacuum(msg, fromId);
 			} else if (msg.k === "grabH") {

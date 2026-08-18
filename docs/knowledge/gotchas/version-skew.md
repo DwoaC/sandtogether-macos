@@ -7,7 +7,7 @@ use_when:
   - applying or re-anchoring patches.json on macOS
   - debugging a patch that fails to find its anchor
   - reporting game-build compatibility in a PR
-timestamp: 2026-08-18T18:00:00Z
+timestamp: 2026-08-18T19:00:00Z
 ---
 
 # macOS game build lags the Windows build
@@ -29,6 +29,19 @@ latest macOS depot simply ships an older build than Windows.
 change identifier names, so an anchor validated on Windows may miss (or,
 worse, match somewhere unintended) on mac. Upstream already maintains
 per-game-version anchor variants — the mac build may need its own set.
+
+## Audit result (mac 0.5.2, buildid 24719878, mod tree @ v0.9.33)
+
+Anchor audit run 2026-08-18 against the mac game's extracted
+`dist/js/bundle.js` (4.10 MB; Windows 0.5.3 recon reported 4.5 MB) and
+`main.js`: **all 15 anchors resolve exactly once** — 14 `bundle` patches
+(12 matched variant #1, the older-minification variant; `frame hook` and
+`demolisher area hook` matched variant #0, their only variant) plus the
+`mainJs` single-instance anchor. `patches.json` `supportedVersions`
+explicitly lists `0.5.2`, so upstream still maintains this build's
+variants. The skew is currently harmless for patching; it becomes a
+problem if upstream drops 0.5.2 from `supportedVersions` while the mac
+depot still lags.
 
 ## Rule
 

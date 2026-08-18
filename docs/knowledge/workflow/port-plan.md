@@ -6,7 +6,7 @@ tags: [porting, plan, macos]
 use_when:
   - starting a work session on this repo and choosing what to do next
   - writing a design spec for any port work item
-timestamp: 2026-08-18T00:00:00Z
+timestamp: 2026-08-18T19:00:00Z
 ---
 
 # macOS port plan
@@ -14,10 +14,11 @@ timestamp: 2026-08-18T00:00:00Z
 The mod's JS (renderer, main-process, preload) is platform-neutral; the
 port is about installation, launch, paths, and anchor verification. Order:
 
-1. **Anchor audit** — extract the mac `app.asar` (game is 0.5.2 here vs
-   upstream's 0.5.3 recon), grep every `src/patches.json` anchor against
-   the mac `dist/js/bundle.js`, record which variants hit exactly once.
-   Blocks everything else. See [version-skew](../gotchas/version-skew.md).
+1. **Anchor audit** — ✅ DONE 2026-08-18: all 15 anchors (14 bundle +
+   1 mainJs) resolve exactly once against the mac 0.5.2 files; details
+   in [version-skew](../gotchas/version-skew.md). Re-run after any game
+   or `patches.json` update (extract via
+   `npx @electron/asar extract-file <app.asar> dist/js/bundle.js`).
 2. **Installer script** (shell, replacing `dist-package` PowerShell):
    extract asar → apply patches → copy mod files → delete `app.asar`,
    preserving `app.asar.unpacked`. See

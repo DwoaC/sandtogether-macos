@@ -6,7 +6,7 @@ tags: [testing, multiplayer, network, machines]
 use_when:
   - planning or running a multiplayer test session
   - deploying a mod build to the second test machine
-timestamp: 2026-08-18T19:30:00Z
+timestamp: 2026-08-18T20:00:00Z
 ---
 
 # Multiplayer test environment
@@ -19,9 +19,9 @@ Two-Mac test rig on the home LAN (network details:
 | | Jason's Mac (dev) | Tony's MacBook Neo |
 |---|---|---|
 | mDNS / IP | (this machine) | `Tonys-MacBook-Neo.local` = 10.194.1.156 (up 2026-08-18) |
-| Sandustry | installed, 0.5.2 / buildid 24719878 | owned + installed (version assumed 0.5.2 — same mac depot; verify on setup) |
-| Workshop item 3784750764 | subscribed | subscribed (content pre-downloaded, but installer is .bat/.ps1 — unusable until our installer exists) |
-| Remote access | — | SSH (22) and Screen Sharing (5900) both closed — deploy via AirDrop/manual copy, or Tony runs steps himself |
+| Sandustry | installed, 0.5.2 / buildid 24719878 | installed, 0.5.2 / buildid 24719878 (verified over SSH 2026-08-18) — identical depot |
+| Workshop item 3784750764 | subscribed | subscribed, content present (installer is .bat/.ps1 — unusable until our installer exists) |
+| Remote access | — | **SSH working**: `ssh neo` (alias in Jason's `~/.ssh/config` → `tony@Tonys-MacBook-Neo.local`, key-based). arm64, macOS 26.5. Deploy builds with `rsync ... neo:` |
 
 Steam accounts must be friends for invite testing. Both machines on the
 same mac depot ⇒ **no game-version skew inside this rig** — the

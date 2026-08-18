@@ -113,9 +113,11 @@ if (fs.existsSync(asar)) {
 }
 
 // --- 4. Version check ---------------------------------------------------------
+// In the dev tree, ../src is the live source of truth; dist-package/src is
+// the release-time copy and can lag it. A packaged build ships its own src/.
 const SRC = fs.existsSync(path.join(__dirname, 'src'))
   ? path.join(__dirname, 'src')
-  : path.join(__dirname, '..', 'dist-package', 'src');
+  : path.join(__dirname, '..', 'src');
 try {
   const gv = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8')).version;
   const sup = JSON.parse(fs.readFileSync(path.join(SRC, 'patches.json'), 'utf8')).supportedVersions;

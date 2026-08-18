@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.31-beta";
+	const VER = "0.9.32-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -1916,7 +1916,33 @@
 							log("demolish-dobicie: gra pominęła", leftovers.size, "struktur (kafle QUEUED?) — usuwam przez removeAt");
 							for (const st of leftovers.values()) { try { SA.removeAt(state, st.x, st.y, {}); } catch (e) {} }
 							if (ST.net.role === "host" && ST.peers.size) try { net.send({ t: "st", k: "rm", list: [...leftovers.values()].map(slimStruct) }); } catch (e) {}
-						} else log("demolish-dobicie: czysto (gra usunęła wszystko sama)");
+						}
+						// OSIEROCONE KAFLE ("czerwone klocki"): struktura już NIE istnieje (getAtCell=null — log
+						// "czysto" przy widocznych klockach!), ale komórki-fundament (terrain Block=15/Sliding 16-18)
+						// zostały w świecie — rozbiórka gry czyści komórki tylko przy usuwaniu ŻYWEJ struktury.
+						// Rozpoznanie: sim.cellIds → id terenu (1..1000) → sim.terrainType[id]. Usuwamy przez
+						// FH.terrains.removeAt WYŁĄCZNIE komórki bez żywej struktury (kafel Block bez struktury = śmieć).
+						try {
+							const sh = state.shared || {};
+							const simc = sh.sim && sh.sim.cellIds, tt = sh.sim && sh.sim.terrainType;
+							const TR = ST.FH.terrains;
+							const { W } = worldBuffers(state);
+							if (simc && tt && TR && TR.removeAt && W) {
+								const sim32 = new Uint32Array(simc.buffer, simc.byteOffset, simc.length);
+								let cleaned = 0;
+								for (let y = hd.y0; y <= hd.y1; y++) for (let x = hd.x0; x <= hd.x1; x++) {
+									const id = sim32[x + y * W];
+									if (id <= 0 || id > 1000) continue; // 0=pusto, >1000=elementy
+									const ty = tt[id];
+									if (ty < 15 || ty > 18) continue; // tylko Block/SlidingBlock* (kafle budowlane gracza)
+									let alive = null; try { alive = SA.getAtCell(state, x, y); } catch (e) {}
+									if (alive) continue; // żywa struktura — jej kafli nie ruszamy
+									try { TR.removeAt(state, x, y); cleaned++; } catch (e) {}
+								}
+								if (cleaned) log("demolish-dobicie: usunięto", cleaned, "OSIEROCONYCH kafli fundamentu (czerwone klocki)");
+								else if (!leftovers.size) log("demolish-dobicie: czysto (brak struktur i osieroconych kafli w recie)");
+							}
+						} catch (e) { log("dobicie kafli error:", e.message); }
 					}
 				} catch (e) { log("demolish-dobicie error:", e.message); }
 			}

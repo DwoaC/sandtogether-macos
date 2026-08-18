@@ -93,7 +93,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.31-beta — hotfix: the red-block force-removal (0.9.30) only armed itself while a co-op session with a connected player was active, so testing it solo did nothing. It now works in every mode: solo, host, offline. Drag the demolisher over a stuck red block and it will be removed a moment later (log line: demolish-dobicie). Update + re-run install.bat.',
+    changeNote: 'v0.9.32-beta — the red blocks are ORPHANED TILES, now cleaned up. Live-log diagnosis showed the stuck red foundations are not structures at all anymore: the structure object is gone, but its foundation tiles were left behind in the world, and the game only clears tiles when demolishing a live structure — so nothing could ever remove them. The demolisher sweep now also detects orphaned building tiles (foundation/block tiles with no structure on them) and removes them directly. Drag the demolisher over the red blocks and they will disappear a moment later. Works solo and in co-op. Update + re-run install.bat.',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

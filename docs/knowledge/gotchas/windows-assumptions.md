@@ -6,7 +6,7 @@ tags: [porting, windows, macos, installer, paths]
 use_when:
   - planning or implementing any piece of the macOS port
   - deciding whether an upstream file can be reused as-is
-timestamp: 2026-08-18T00:00:00Z
+timestamp: 2026-08-18T18:00:00Z
 ---
 
 # Windows assumptions in upstream to replace
@@ -26,6 +26,7 @@ platform-neutral; everything around it assumes Windows.
 | `%APPDATA%\Sandustry` (logs, saves, mods) | `~/Library/Application Support/Sandustry` |
 | `%APPDATA%\Sandustry\logs\main.log` | same dir on mac; `logs/` not present on an unmodded install — verify on first modded run |
 | `repatch.bat`, `update.bat` in related tooling | shell scripts |
+| `src/publish-workshop.js` hardcodes `GAME_SW = 'F:/SteamLibrary/...'` for steamworks.js | parameterize; mac path is inside `Sandustry.app/Contents/Resources/app.asar.unpacked/node_modules/steamworks.js` |
 
 ## Gotchas
 

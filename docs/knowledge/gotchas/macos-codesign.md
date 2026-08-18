@@ -6,7 +6,7 @@ tags: [codesign, macos, gatekeeper, security]
 use_when:
   - modifying anything inside Sandustry.app
   - debugging the game failing to launch after installing the mod
-timestamp: 2026-08-18T00:00:00Z
+timestamp: 2026-08-18T21:00:00Z
 ---
 
 # Sandustry.app is adhoc-signed
@@ -21,13 +21,11 @@ Verified 2026-08-18 with `codesign -dv`:
   hardened-runtime Developer ID seal that modifying
   `Contents/Resources` would break. Steam-launched apps also skip the
   quarantine/Gatekeeper path a downloaded app would hit.
-- **Unverified** (test before asserting in docs or installer output):
-  whether deleting/replacing `app.asar` launches cleanly on Apple
-  Silicon, where the kernel requires *some* valid signature on the
-  executable itself. The executable's own linker signature is untouched
-  by Resources changes, so it should launch — but this must be confirmed
-  on first modded run.
-- Fallback if launch fails after modification:
+- **Verified 2026-08-18 on arm64 (this machine):** the fully modded
+  bundle (asar extracted+renamed, files patched) launches cleanly with
+  the mod active — the executable's linker signature is untouched by
+  Resources changes, and no re-sign was needed.
+- Fallback if a future macOS tightens this:
   `codesign --force --deep -s - "<path>/Sandustry.app"` re-applies an
   adhoc signature to the whole bundle.
 

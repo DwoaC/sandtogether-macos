@@ -7,7 +7,7 @@ use_when:
   - writing or porting install/uninstall/launch scripts for the mod
   - deciding where to copy mod files or patch game files on macOS
   - locating the game's user data, saves, mods, or settings on macOS
-timestamp: 2026-08-18T00:00:00Z
+timestamp: 2026-08-18T21:00:00Z
 ---
 
 # Sandustry macOS install layout
@@ -39,9 +39,9 @@ macOS.
 - `~/Library/Application Support/Sandustry/` (Electron userData) —
   contains `saves/`, `mods/` (exists, empty), `custom_maps/`,
   `meta/settings.json`, `meta/lastPlayedGame.json`
-- Windows `%APPDATA%\Sandustry` maps here. Upstream's log path
-  `%APPDATA%\Sandustry\logs\main.log` had no `logs/` dir here yet —
-  likely created on first modded run; verify before hardcoding.
+- Windows `%APPDATA%\Sandustry` maps here for userData — but NOT for
+  logs: on mac electron-log writes to `~/Library/Logs/Sandustry/main.log`
+  (verified on first modded run 2026-08-18).
 
 ## Gotchas
 

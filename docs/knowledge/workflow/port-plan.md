@@ -6,7 +6,7 @@ tags: [porting, plan, macos]
 use_when:
   - starting a work session on this repo and choosing what to do next
   - writing a design spec for any port work item
-timestamp: 2026-08-18T19:00:00Z
+timestamp: 2026-08-18T21:00:00Z
 ---
 
 # macOS port plan
@@ -19,16 +19,17 @@ port is about installation, launch, paths, and anchor verification. Order:
    in [version-skew](../gotchas/version-skew.md). Re-run after any game
    or `patches.json` update (extract via
    `npx @electron/asar extract-file <app.asar> dist/js/bundle.js`).
-2. **Installer script** (shell, replacing `dist-package` PowerShell):
-   extract asar → apply patches → copy mod files → delete `app.asar`,
-   preserving `app.asar.unpacked`. See
+2. **Installer** — ✅ DONE 2026-08-18: `dist-package-mac/install.js` +
+   `install.command`. See
    [build-and-install-macos](build-and-install-macos.md).
-3. **Launcher script** (replacing `SandTogether-START.bat`): delete
-   resurrected `app.asar` if present, launch game. See
-   [asar-restore](../gotchas/asar-restore.md).
-4. **First modded run** — confirm launch (codesign question, see
-   [macos-codesign](../gotchas/macos-codesign.md)), confirm
-   `[SandTogether]` entries in the log, confirm log path on mac.
+3. **Launcher** — ✅ DONE 2026-08-18:
+   `dist-package-mac/SandTogether-Launch.command` (re-runs installer if
+   asar restored, then steam:// launch).
+4. **First modded run** — ✅ DONE 2026-08-18 on this machine: launches
+   clean on arm64 (codesign non-issue, see
+   [macos-codesign](../gotchas/macos-codesign.md)); `[SandTogether]`
+   active in `~/Library/Logs/Sandustry/main.log`, world state captured,
+   event subscriptions live.
 5. **Two-instance LAN test** — `--st-userdata=<dir>` second instance,
    Host LAN / Join LAN on 127.0.0.1. See
    [dev-loop-macos](dev-loop-macos.md).

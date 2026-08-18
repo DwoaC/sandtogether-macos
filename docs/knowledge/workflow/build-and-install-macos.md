@@ -6,43 +6,48 @@ tags: [installer, launcher, asar, shell]
 use_when:
   - writing or changing the macOS installer or launcher scripts
   - packaging a player-facing release
-timestamp: 2026-08-18T00:00:00Z
+resource: dist-package-mac/install.js
+timestamp: 2026-08-18T21:00:00Z
 ---
 
 # Building and installing the mod on macOS
 
-Upstream ships `dist-package/` — a pure-PowerShell installer (no Node
-needed for players) plus docs. The macOS port needs the same contract as
-shell scripts. Nothing is built from source; "build" here means patch +
-package.
+Built and verified 2026-08-18 (real install + modded launch on this
+machine). Lives in `dist-package-mac/`, the mac counterpart of
+upstream's PowerShell `dist-package/`:
 
-## Installer must
+- **`install.js`** — dependency-free Node script mirroring
+  `install.ps1`: locate game (default library + `libraryfolders.vdf`),
+  kill running game, extract `app.asar` → `app/` with a built-in asar
+  reader (fresh re-extract whenever the asar is present, so `app/`
+  always matches the current build), rename asar → `app.asar.bak`, then
+  delegate all patching to upstream's cross-platform `src/patch.js`
+  (spawned with `process.execPath`). Idempotent. Payload `src/` is
+  resolved from `__dirname/src` first, falling back to
+  `../dist-package/src` for in-repo dev runs.
+- **`install.command`** — double-clickable wrapper. No Node required:
+  runs `install.js` via `ELECTRON_RUN_AS_NODE=1` on the game's own
+  Electron binary (Node v20.18.1). Requires `process.noAsar` — see
+  [electron-as-node-asar](../gotchas/electron-as-node-asar.md).
+- **`SandTogether-Launch.command`** — if Steam restored `app.asar`,
+  re-runs the installer (full re-extract + re-patch — safer than
+  upstream's delete-only START.bat after game updates), then
+  `open steam://run/2764460` so overlay and `+connect_lobby` invites
+  keep working.
 
-1. Locate the game:
-   `~/Library/Application Support/Steam/steamapps/common/Sandustry/Sandustry.app`
-   (allow override for non-default Steam libraries).
-2. Extract `Contents/Resources/app.asar` → `Contents/Resources/app/`
-   (needs an asar extractor; upstream avoids Node for players — decide:
-   bundle a minimal extractor or require `npx asar`).
-3. Apply every `src/patches.json` anchor→replacement to
-   `app/dist/js/bundle.js`; fail loudly if any anchor count ≠ 1.
-4. Copy `src/sandtogether.js` → `app/dist/js/`, append
-   `src/st-preload-append.js` to the preload, install `src/st-main.js`
-   per upstream's layout.
-5. Delete `app.asar` (Electron prefers it over `app/` —
-   [asar-restore](../gotchas/asar-restore.md)). Leave
-   `app.asar.unpacked/` untouched (native steamworks.js lives there).
-6. Re-run required after every game or mod update.
+`app.asar.unpacked/` is never touched — native steamworks.js lives
+there, and the extractor copies its members into `app/` from it.
 
-## Launcher must
+Uninstall: Steam → verify integrity (restores `app.asar`), delete
+`Contents/Resources/app`.
 
-Delete `Contents/Resources/app.asar` if Steam recreated it, then launch
-the game (via `open` on the .app or `steam://run/2764460` — the Steam URL
-keeps the Steam overlay/launch context; verify `+connect_lobby` arg
-passthrough for invite joins).
+Still open for player-grade release: `+connect_lobby` passthrough via
+the steam:// launch is unverified, and `.command` files downloaded from
+the internet will hit Gatekeeper quarantine (workshop-delivered files
+via Steam should be clean; verify on Tony's machine).
 
 ## Related
 
-- [windows-assumptions](../gotchas/windows-assumptions.md) — the scripts being replaced
-- [macos-codesign](../gotchas/macos-codesign.md) — post-modification launch risk
-- [patching-system](../systems/patching-system.md) — what step 3 applies
+- [windows-assumptions](../gotchas/windows-assumptions.md) — the scripts this replaced
+- [asar-restore](../gotchas/asar-restore.md) — why the launcher re-checks every start
+- [patching-system](../systems/patching-system.md) — what patch.js applies

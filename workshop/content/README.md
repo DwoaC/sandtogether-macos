@@ -9,10 +9,19 @@ Polska instrukcja: zobacz `INSTRUKCJA.md`.
 
 ## Installation — ONCE, ever
 
+**Windows:**
 1. Have Sandustry installed from Steam (launch it once normally).
 2. Right-click `install.bat` → **Run** (or `install.ps1` → Run with PowerShell;
    if Windows blocks it: `powershell -ExecutionPolicy Bypass -File install.ps1`).
 3. Launch the game — the **SandTogether** panel appears in the top-right corner.
+
+**macOS:**
+1. Have Sandustry installed from Steam (launch it once normally).
+2. Open Terminal and run: `bash "<this folder>/install-macos.command"`
+   (or right-click the file → Open; if macOS blocks it: System Settings →
+   Privacy & Security → Open Anyway). No dependencies — the installer uses
+   the game's own engine.
+3. Launch the game from Steam — same panel, same features.
 
 **That's it — forever.** Since v0.9.39 the mod **auto-updates itself** at every game
 launch from your Workshop subscription (the game restarts once when it does).

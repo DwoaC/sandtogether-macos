@@ -404,8 +404,12 @@ function applyBundlePatches(bundlePath, patches) {
 }
 function autoUpdateFromWorkshop() {
   try {
-    const appDir = __dirname; // .../steamapps/common/Sandustry/resources/app
-    const steamapps = path.resolve(appDir, '..', '..', '..', '..');
+    // Windows: steamapps/common/Sandustry/resources/app (4 poziomy w górę)
+    // macOS:   steamapps/common/Sandustry/Sandustry.app/Contents/Resources/app (6 poziomów)
+    // → szukamy katalogu "steamapps" W GÓRĘ zamiast liczyć poziomy.
+    let steamapps = __dirname;
+    for (let i = 0; i < 8 && path.basename(steamapps).toLowerCase() !== 'steamapps'; i++) steamapps = path.dirname(steamapps);
+    if (path.basename(steamapps).toLowerCase() !== 'steamapps') return;
     const ws = path.join(steamapps, 'workshop', 'content', '2764460', WORKSHOP_ITEM);
     const wsMod = path.join(ws, 'src', 'sandtogether.js');
     const localMod = path.join(appDir, 'dist', 'js', 'sandtogether.js');

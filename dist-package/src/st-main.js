@@ -307,7 +307,7 @@ function handleIncoming(peerId, text, steamSid) {
   }
   emitMsg(peerId, obj);
   // host relays player positions/hellos to the other clients (3+ player support)
-  if (S.role === 'host' && (obj.t === 'pos' || obj.t === 'hello') && S.peers.size > 1) {
+  if (S.role === 'host' && (obj.t === 'pos' || obj.t === 'hello' || obj.t === 'chat' || obj.t === 'myproj' || obj.t === 'snd') && S.peers.size > 1) {
     const relay = { t: 'relay', from: peerId, msg: obj };
     for (const p of S.peers.values()) if (p.id !== peerId) sendToPeer(p, relay);
   }

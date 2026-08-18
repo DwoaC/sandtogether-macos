@@ -100,7 +100,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'Description refresh: the feature list now reflects v0.9.36 (it still said v0.5!), and a long-overdue THANK YOU section credits the contributors and every tester by name — this mod is community-built. Mod files unchanged since v0.9.36-beta (joining 2-4x faster via fog-skip, LAN auto-reconnect, plus the whole shared-progression batch).',
+    changeNote: 'v0.9.37-beta — quality-of-life batch: (1) TEAM CHAT in the panel — type, Enter, done (host relays it, so it works with 3-4 players). (2) PER-PLAYER MEMORY: rejoining a world you played before puts you back where you left off, with your inventory — no more respawning as a copy of the host. (3) MACHINE SETTINGS by the joining player (filters, priorities, any machine UI config) now stick — they used to silently revert. (4) 3-4 PLAYER polish: you now see the other CLIENTS\' projectiles and hear their world sounds (host relays them). (5) Item drops appear for everyone instantly instead of after 2.5s. Both players update + re-run install.bat.',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

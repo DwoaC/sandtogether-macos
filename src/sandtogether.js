@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.36-beta";
+	const VER = "0.9.37-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -38,6 +38,7 @@
 			btn_join_lan: "Join LAN", btn_connect: "Connect", btn_stop: "Stop", btn_send_world: "Send world", btn_resync: "Resync",
 			host_paused: "Host paused (menu) — world frozen, will resume automatically", sync_stalled: "No world data from host for {0}s…",
 			reconnecting: "Connection lost — reconnecting (attempt {0}/5)…",
+			chat_ph: "chat message…", chat_me: "You",
 			btn_join_id: "Join by ID (clipboard)", lobby_copied: "Copied!",
 			clipboard_no_id: "Clipboard has no Lobby ID — first click the host's green Lobby ID line to copy it",
 			hint: "click header to hide (Ctrl+Shift+H)", by: "by " + AUTHOR + " + " + CONTRIBUTORS,
@@ -67,6 +68,7 @@
 			btn_join_lan: "Dołącz LAN", btn_connect: "Połącz", btn_stop: "Stop", btn_send_world: "Wyślij świat", btn_resync: "Resync",
 			host_paused: "Host w pauzie (menu) — świat zamrożony, wznowi się sam", sync_stalled: "Brak danych świata od hosta od {0}s…",
 			reconnecting: "Zerwane połączenie — łączę ponownie (próba {0}/5)…",
+			chat_ph: "wiadomość czatu…", chat_me: "Ty",
 			btn_join_id: "Dołącz po ID (schowek)", lobby_copied: "Skopiowano!",
 			clipboard_no_id: "Schowek nie zawiera Lobby ID — najpierw kliknij zieloną linię Lobby ID u hosta, żeby je skopiować",
 			hint: "kliknij nagłówek by ukryć (Ctrl+Shift+H)", by: "autor: " + AUTHOR + " + " + CONTRIBUTORS,
@@ -201,6 +203,39 @@
 	// Prawidłowy typ elementu do sieci: liczba całkowita > 0. Odsiewa null/undefined/0 (pusty slot tanku,
 	// T[o+2] hors-bornes u zdesynchronizowanego klienta) — inaczej host robi createAt(...,undefined) i się wywala.
 	const validElement = (v) => Number.isInteger(v) && v > 0;
+	// PER-GRACZ PERSYSTENCJA (G7-lite): join resetował klienta do gracza z save'a HOSTA (pozycja,
+	// ekwipunek). Profil klienta zapisujemy per świat-hosta (localStorage, klucz = zaufany wid)
+	// i przywracamy po starcie lustra. Zasoby/upgrade'y są wspólne (drużynowe) — te nie wymagają profilu.
+	function profileSave(state) {
+		try {
+			if (!isClientSync() || !ST.wsx.paused || !ST._trustedWid) return;
+			const p = state.store.player;
+			if (!p || typeof p.x !== "number") return;
+			const prof = { x: p.x, y: p.y, t: Date.now() };
+			try { if (Array.isArray(p.inventory)) prof.inv = JSON.parse(JSON.stringify(p.inventory)); } catch (e) {}
+			localStorage.setItem("st_prof_" + ST._trustedWid, JSON.stringify(prof));
+		} catch (e) {}
+	}
+	function profileRestore(state, wid) {
+		try {
+			const raw = localStorage.getItem("st_prof_" + wid);
+			if (!raw) return;
+			const prof = JSON.parse(raw);
+			const p = state.store.player;
+			if (!p) return;
+			if (typeof prof.x === "number" && typeof prof.y === "number") {
+				p.x = prof.x; p.y = prof.y;
+				if (p.velocity) { p.velocity.x = 0; p.velocity.y = 0; }
+				const pp = arr(state.shared.playerPos); if (pp && pp.length >= 2) { pp[0] = prof.x; pp[1] = prof.y; }
+			}
+			// ekwipunek: przywracamy tylko gdy struktura wygląda zdrowo (plain items z id)
+			if (Array.isArray(prof.inv) && Array.isArray(p.inventory) && prof.inv.every((i) => i && typeof i === "object")) {
+				try { p.inventory.length = 0; for (const it of prof.inv) p.inventory.push(it); } catch (e) {}
+			}
+			log("Profil klienta przywrócony dla świata", wid, "(pozycja " + Math.round(prof.x) + "," + Math.round(prof.y) + (prof.inv ? " + ekwipunek)" : ")"));
+		} catch (e) {}
+	}
+
 	// Grabber (klient): wyzeruj cellId komórki lokalnie i zapamiętaj ją, żeby grabber nie wziął jej ponownie
 	// zanim host potwierdzi usunięcie przez lustro. Wołane tylko po stronie klienta (renderujący lustro).
 	function grabClearLocal(state, x, y) {
@@ -275,6 +310,19 @@
 	const setSyncInfo = (text) => {
 		if (ST._hud) ST._hud.querySelector("#st-sync").textContent = text;
 	};
+	// czat: dopisz linię (max 5 widocznych), tekst przez textContent (zero HTML injection)
+	const addChat = (nick, text) => {
+		try {
+			if (!ST._hud) return;
+			const lg = ST._hud.querySelector("#st-chat-log");
+			if (!lg) return;
+			const line = document.createElement("div");
+			const b = document.createElement("b"); b.textContent = nick + ": "; b.style.color = "#7af";
+			line.appendChild(b); line.appendChild(document.createTextNode(text));
+			lg.appendChild(line);
+			while (lg.children.length > 5) lg.removeChild(lg.firstChild);
+		} catch (e) {}
+	};
 
 	const isClientSync = () => ST.net.role === "client" && ST.state;
 	const isHostSync = () => ST.net.role === "host" && ST.state && ST.peers.size > 0;
@@ -306,11 +354,13 @@
 					if (hostInWorld) sendWorld();
 				}
 			} else if (ev.kind === "peer-disconnected") {
+				if (ST.state) profileSave(ST.state); // utrwal profil PRZED ewentualną zmianą stanu (G7-lite)
 				ST.peers.delete(ev.id); removePeerPuppet(ev.id);
 				setStatus(t("player_left", ST.peers.size + 1), "#fa5");
 				// KLIENT ZOSTAJE ZAPAUZOWANY — ciche odpauzowanie tworzyło rozwidlony świat (gracz "grał dalej"
 				// lokalnie nie wiedząc, że wszystko przepadnie przy ponownym joinie). Chcesz grać solo → Stop.
 			} else if (ev.kind === "stopped") {
+				if (ST.state) profileSave(ST.state); // przed resetem roli (isClientSync jeszcze true)
 				ST.net.role = "idle"; ST.peers.clear(); removeAllPeerPuppets(); setStatus(t("offline"), "#aaa"); showInviteButton(false); ST.net.lobbyId = null; updateLobbyIdDisplay(); updatePingDisplay();
 				ST._fireQ = []; ST._cryoQ = []; ST._grabbedCells.clear(); ST._placedCells.clear();
 				ST._gotHostWorld = false;
@@ -377,6 +427,11 @@
 				setStatus(t("ver_mismatch") + " [" + ((p && p.nick) || from) + ": " + msg.v + " / you: " + VER + "]", "#f66");
 				log("RÓŻNE WERSJE MODA:", from, "ma", msg.v, "— ja mam", VER);
 			} else log("wersja moda OK u", (p && p.nick) || from, "->", msg.v);
+		} else if (msg.t === "wi") {
+			if (ST.net.role === "client" && ST.state && ST.wsx.paused) { ST._applyingNet = true; try { applyWorldItems(ST.state, msg.wi); } finally { ST._applyingNet = false; } }
+		} else if (msg.t === "chat") {
+			const nick = (ST.peers.get(from) && ST.peers.get(from).nick) || "?";
+			addChat(nick, String(msg.m || "").slice(0, 200));
 		} else if (msg.t === "hb") {
 			// heartbeat hosta (fix G4): jedyny sygnał, który przechodzi gdy host pauzuje (frame stoi)
 			if (ST.net.role === "client") {
@@ -702,7 +757,10 @@
 		}
 		const w = ST.wsx;
 		if (applied > 0) ST._lastWcT = performance.now(); // do wskaźnika zatoru (sync_stalled)
-		if (applied > 0 && !w.everApplied) { w.everApplied = true; log("Pierwsze paczki świata zastosowane — lustro działa"); setStatus(t("players", ST.peers.size + 1)); }
+		if (applied > 0 && !w.everApplied) {
+			w.everApplied = true; log("Pierwsze paczki świata zastosowane — lustro działa"); setStatus(t("players", ST.peers.size + 1));
+			profileRestore(state, msg.wid || ST._trustedWid); // wróć tam, gdzie skończyłeś w TYM świecie (G7-lite)
+		}
 		w.applyBytes += msg.d.length * 0.75; w.applyCount += applied;
 		const now = performance.now();
 		if (now - w.statT > 2000) {
@@ -718,6 +776,34 @@
 	// ------------------------------------------------------------------
 	const slimStruct = (s) => ({ type: s.type, x: s.x, y: s.y, data: s.data });
 	const structKey = (s) => s.type + "@" + s.x + "," + s.y;
+	// KONFIG MASZYN przez klienta (G5b): edycje structure.data w UI maszyn nie mają eventu — wykrywamy
+	// je diffem JSON w POBLIŻU gracza (tam się klika; pełny skan tysięcy struktur co klatkę = za drogo).
+	const dataSeenSet = (k, d) => { if (!ST._dataSeen) ST._dataSeen = new Map(); try { ST._dataSeen.set(k, JSON.stringify(d == null ? null : d)); } catch (e) {} };
+	function scanDataEditsIfDue(state) {
+		const now = performance.now();
+		if (now - (ST._dataScanT || 0) < 800) return;
+		ST._dataScanT = now;
+		try {
+			if (!ST._dataSeen) return;
+			if (!ST._dataEdited) ST._dataEdited = new Map();
+			const px = state.store.player.x / 4, py = state.store.player.y / 4, R = 48; // ~ekran wokół gracza (komórki)
+			for (const s of state.store.structures || []) {
+				if (Math.abs(s.x - px) > R || Math.abs(s.y - py) > R) continue;
+				const k = structKey(s);
+				const prev = ST._dataSeen.get(k);
+				if (prev === undefined) { dataSeenSet(k, s.data); continue; }
+				let cur; try { cur = JSON.stringify(s.data == null ? null : s.data); } catch (e) { continue; }
+				if (cur !== prev) {
+					ST._dataSeen.set(k, cur);
+					ST._dataEdited.set(k, now);
+					try { net.send({ t: "act", k: "sdata", x: s.x, y: s.y, type: s.type, data: JSON.parse(cur) }); } catch (e) {}
+					log("CLIENT config maszyny →", k);
+				}
+			}
+			// higiena okna ochronnego
+			for (const [k, ts] of ST._dataEdited) if (now - ts > 10000) ST._dataEdited.delete(k);
+		} catch (e) {}
+	}
 
 	function subscribeGameEvents(state) {
 		if (ST._subscribedState === state || !ST.FH || !ST.FH.events) return;
@@ -873,9 +959,16 @@
 			const existing = SA.getAtCell(state, s.x, s.y);
 			if (existing && existing.type === s.type) {
 				if (s.data && JSON.stringify(existing.data) !== JSON.stringify(s.data)) {
-					existing.data = s.data;
-					if (SA.update) SA.update(state, existing, { propagateToWorkers: ST.net.role === "host" });
-				}
+					// KONFIG MASZYN (G5b): świeżo edytowane przez klienta data chronimy przed nadpisaniem
+					// przez snapshot hosta (act sdata jest w drodze; host potwierdzi w następnym snapie)
+					const k = structKey(s);
+					const edited = ST._dataEdited && ST._dataEdited.get(k);
+					if (!(ST.net.role === "client" && edited != null && performance.now() - edited < 6000)) {
+						existing.data = s.data;
+						if (SA.update) SA.update(state, existing, { propagateToWorkers: ST.net.role === "host" });
+						if (ST.net.role === "client") dataSeenSet(k, s.data); // baza do wykrywania edycji klienta
+					}
+				} else if (ST.net.role === "client") dataSeenSet(structKey(s), existing.data);
 				return existing;
 			}
 			const pos = force ? { x: s.x, y: s.y, clearance: CLEARANCE_AVAILABLE } : { x: s.x, y: s.y };
@@ -956,11 +1049,29 @@
 				for (const s of hostList) { buildOne(state, s, true); ST._structApplied.set(structKey(s), nowS); }
 			}
 			// worldItems: odfiltruj świeżo podniesione lokalnie (czekające na potwierdzenie hosta, TTL 10 s)
-			const now = performance.now();
-			for (const [id, ts] of ST._pickedPending) if (now - ts > 10000) ST._pickedPending.delete(id);
-			state.store.worldItems = (snap.wi || []).filter((i) => !ST._pickedPending.has(i.id));
+			applyWorldItems(state, snap.wi || []);
 		} catch (e) { log("reconcile error:", e.message); }
 		finally { ST._applyingNet = false; }
+	}
+	function applyWorldItems(state, list) {
+		const now = performance.now();
+		for (const [id, ts] of ST._pickedPending) if (now - ts > 10000) ST._pickedPending.delete(id);
+		state.store.worldItems = (list || []).filter((i) => !ST._pickedPending.has(i.id));
+	}
+	// SZYBKIE DROPY (G12): nowy przedmiot na ziemi docierał dopiero ze snapshotem 2,5s.
+	// Host: przy każdej ZMIANIE listy id wysyła ją od razu (sprawdzane 5 Hz, wysyłka tylko przy zmianie).
+	function sendWorldItemsIfChanged(state) {
+		const now = performance.now();
+		if (now - (ST._wiT || 0) < 200) return;
+		ST._wiT = now;
+		try {
+			const wi = state.store.worldItems || [];
+			let key = wi.length + ":";
+			for (let i = 0; i < wi.length; i++) key += wi[i].id + ",";
+			if (key === ST._wiKey) return;
+			ST._wiKey = key;
+			net.send({ t: "wi", wi });
+		} catch (e) {}
 	}
 
 	// ------------------------------------------------------------------
@@ -1525,6 +1636,18 @@
 					net.send({ t: "st", k: "add", list: msg.list });
 					log("HOST: paste klienta —", ok + "/" + (msg.list || []).length, "struktur");
 				} finally { ST._applyingNet = false; }
+			} else if (msg.k === "sdata") {
+				// konfiguracja maszyny zmieniona przez klienta (filtry/priorytety/ustawienia UI)
+				ST._applyingNet = true;
+				try {
+					const SA3 = structNs();
+					const ex = SA3 && SA3.getAtCell(state, msg.x, msg.y);
+					if (ex && ex.type === msg.type) {
+						ex.data = msg.data;
+						if (SA3.update) SA3.update(state, ex, { propagateToWorkers: true });
+						log("HOST: config maszyny od klienta:", msg.type, "@", msg.x, msg.y);
+					}
+				} finally { ST._applyingNet = false; }
 			} else if (msg.k === "pipeRm") {
 				// rozbiórka rur klienta: wołamy PRAWDZIWĄ funkcję gry (Zn z modułu demolish, eksport z patcha)
 				ST._applyingNet = true;
@@ -1651,6 +1774,13 @@
 			'style="width:150px;background:#111;color:#ddd;border:1px solid #555;border-radius:3px;font:11px monospace;padding:2px 4px"> ' +
 			'<button id="st-lan-go">' + t("btn_connect") + "</button>" +
 			"</div>" +
+			// czat drużynowy (host relayuje między klientami)
+			'<div id="st-chat-log" style="margin-top:4px;max-height:72px;overflow:hidden;font-size:10px;color:#cde;line-height:1.35"></div>' +
+			'<div id="st-chat-row" style="margin-top:2px">' +
+			'<input id="st-chat-in" placeholder="' + t("chat_ph") + '" maxlength="200" spellcheck="false" ' +
+			'style="width:150px;background:#111;color:#ddd;border:1px solid #555;border-radius:3px;font:11px monospace;padding:2px 4px"> ' +
+			'<button id="st-chat-send">➤</button>' +
+			"</div>" +
 			"</div>" +
 			'<div id="st-hint" style="margin-top:4px;color:#666;font-size:10px">' + t("hint") + "</div>" +
 			"</div>";
@@ -1683,6 +1813,18 @@
 		};
 		hud.querySelector("#st-lan-go").onclick = doJoinLan;
 		lanInput.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); doJoinLan(); } };
+		// CZAT: wysyłka Enterem/przyciskiem; klawisze nie przeciekają do gry (jak pole LAN)
+		const chatIn = hud.querySelector("#st-chat-in");
+		const chatSend = () => {
+			const m = (chatIn.value || "").trim();
+			if (!m || ST.net.role === "idle") return;
+			chatIn.value = "";
+			try { net.send({ t: "chat", m }); } catch (e) {}
+			addChat(t("chat_me"), m);
+		};
+		hud.querySelector("#st-chat-send").onclick = chatSend;
+		chatIn.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); chatSend(); } });
+		chatIn.addEventListener("keyup", (e) => e.stopPropagation());
 		hud.querySelector("#st-stop").onclick = () => { setClientPaused(false); net.stop(); };
 		hud.querySelector("#st-send-world").onclick = sendWorld;
 		hud.querySelector("#st-resync").onclick = () => net.send({ t: "resync" });
@@ -2138,6 +2280,7 @@
 			sendSnapshotIfDue(state);
 			sendResourcesIfDue(state);
 			sendEntitiesIfDue(state);
+			sendWorldItemsIfChanged(state); // szybkie dropy (G12)
 		}
 		// Dobijanie po rozbiórce (patrz _demol): 250ms po przeciągnięciu sprawdź, czy w recie zostały
 		// struktury pominięte przez grę (kafle utkwione w QUEUED) i zdejmij je przez SA.removeAt.
@@ -2207,6 +2350,9 @@
 				ST._waitHintT = now;
 				setStatus(t("waiting_world"), "#fd5");
 			}
+			// profil klienta (G7-lite): zapis co 10s (pozycja+ekwipunek per świat hosta)
+			if (now - (ST._profT || 0) > 10000) { ST._profT = now; profileSave(state); }
+			scanDataEditsIfDue(state); // konfig maszyn edytowany przez klienta → forward (G5b)
 			// zator lustra (fix G4): działało, a od >4s nic nie przychodzi i host NIE zgłasza pauzy → pokaż ile czekamy
 			if (ST.wsx.everApplied && !ST._hostPausedShown && ST._lastWcT && now - ST._lastWcT > 4000 && now - (ST._stallHintT || 0) > 2000) {
 				ST._stallHintT = now;

@@ -145,6 +145,16 @@
       ]
     },
     {
+      "name": "demolisher area hook (_demol)",
+      "critical": false,
+      "variants": [
+        {
+          "anchor": "try{let{start:t,end:n}=H(e);const o=b.FH.action.getSelected(e)",
+          "patched": "try{let{start:t,end:n}=H(e);if(window.SandTogether&&window.SandTogether._demol&&window.SandTogether._demol(e,t,n)){a.action.customData=null;return}const o=b.FH.action.getSelected(e)"
+        }
+      ]
+    },
+    {
       "name": "achievements with mods",
       "variants": [
         {

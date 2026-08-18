@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.27-beta";
+	const VER = "0.9.28-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -882,9 +882,21 @@
 				c: conv ? Array.from(conv) : null,
 				st: state.store.mods || null,          // postęp fabuły (storyProgression)
 				gl: state.store.gloom || null,          // stan gloomu
+				fp: fpCounters(state),                  // liczniki procesów fabryki (ShakeWetSand itd.) — SAB nie-lustrzany
 			});
 		} catch (e) {}
 	}
+	// Liczniki "factory.processing" (SAB per-instancja, NIE objęty lustrem świata!): postęp procesów
+	// ShakeWetSand/PressBurntResidue/GrowFlowers/CondenseFlorin. Bez streamu klient widział 0 postępu
+	// ("shaking wet sand aint working" — TCentraL: proces DZIAŁAŁ na hoście, ale UI klienta martwe).
+	function fpArr(state) { // surowa tablica SAB (do zapisu u klienta)
+		try {
+			const w = ST.FH.workers;
+			const a = w && w.shared && w.shared.get && w.shared.get(state, "factory.processing");
+			return a && a.length ? a : null;
+		} catch (e) { return null; }
+	}
+	function fpCounters(state) { const a = fpArr(state); return a ? Array.from(a) : null; }
 	function applyResources(msg) {
 		const state = ST.state;
 		if (!state) return;
@@ -898,6 +910,7 @@
 			if (msg.c && arr(sh.conveyorBeltsAnimationIndex)) { const c = arr(sh.conveyorBeltsAnimationIndex); for (let i = 0; i < Math.min(c.length, msg.c.length); i++) c[i] = msg.c[i]; }
 			if (msg.st) state.store.mods = msg.st;
 			if (msg.gl) state.store.gloom = msg.gl;
+			if (msg.fp) { const a = fpArr(state); if (a) { const src = msg.fp; for (let i = 0; i < Math.min(a.length, src.length); i++) { try { Atomics.store(a, i, src[i]); } catch (e) { a[i] = src[i]; } } } }
 				ST._resSnapshot = Object.assign({}, state.store.resources); // re-baza dla przyrostów klienta (dotNine)
 		} catch (e) {}
 	}
@@ -1196,9 +1209,42 @@
 		// Garde anti-flood: przy WCZYTYWANIU świata gra odpala building:place dla wielu struktur naraz
 		// (rekonstrukcja). Nie forwardujemy przez ~3s po zmianie sceny — inaczej host dostaje setki poz z save'a.
 		if (ST._loadGuardUntil && performance.now() < ST._loadGuardUntil) return false; // load → pozwól lokalnej rekonstrukcji, nie forwarduj
-		if ((ST._plDiag2 = (ST._plDiag2 || 0) + 1) <= 300) log("CLIENT forward place:", structureType, "@", x, y, "(typeof " + typeof structureType + ")");
-		try { net.send({ t: "act", k: "place", type: structureType, x, y }); } catch (e) {}
+		if ((ST._plDiag2 = (ST._plDiag2 || 0) + 1) <= 300) log("CLIENT forward place:", structureType, "@", x, y, "(typeof " + typeof structureType + ")", data ? "z data" : "bez data");
+		// KLUCZOWE (fix "fundamentów nie da się usunąć"): forwardujemy też DATA struktury. Fundamenty
+		// (box/skosy/kolor) niosą definicję w data — bez niej host budował ZDEGENEROWANĄ wersję, której
+		// ścieżka usuwania fundamentów (drag) nie umiała dopasować → nieusuwalne nawet dla hosta.
+		let d = null;
+		try { if (data != null) d = JSON.parse(JSON.stringify(data)); } catch (e) {} // tylko serializowalne pola
+		try { net.send({ t: "act", k: "place", type: structureType, x, y, data: d }); } catch (e) {}
 		return true; // anuluj lokalne stawianie — klient nic nie pisze do świata
+	};
+
+	// Demolisher klienta (hook _demol z ticku narzędzia, gałąź End przeciągnięcia).
+	// Problem: lokalna rozbiórka u klienta NIE wykonuje się do końca (część idzie przez odroczone
+	// kolejki/workery zapauzowanego sima) → tylko czerwony mark, event structures:removed nie odpala,
+	// nic nie forwardujemy ("recolors them red, and thats it" — TCentraL). Fix: przechwyć INTENCJĘ:
+	// znajdź struktury w zaznaczonym recie po LUSTRZE (getAtCell na komórkach recta — dokładność jak
+	// gra, uwzględnia shape) i wyślij istniejącym kanałem act demolish. Host usuwa, st rm potwierdza.
+	ST._demol = (state, start, end) => {
+		try {
+			if (!isClientSync() || !ST.wsx.paused) return false; // host/solo → normalna lokalna rozbiórka
+			// rury (Pipe) idą w grze osobną funkcją — nie przechwytujemy (na razie lokalnie)
+			try { const sel = ST.FH.action && ST.FH.action.getSelected && ST.FH.action.getSelected(state); if (sel && String(sel.id).toLowerCase().indexOf("pipe") >= 0) return false; } catch (e) {}
+			const SA = structNs(); if (!SA) return false;
+			const cs = 4; // cellSize (stały w grze)
+			const x0 = Math.floor(Math.min(start.x, end.x) / cs), x1 = Math.ceil(Math.max(start.x, end.x) / cs);
+			const y0 = Math.floor(Math.min(start.y, end.y) / cs), y1 = Math.ceil(Math.max(start.y, end.y) / cs);
+			if ((x1 - x0 + 1) * (y1 - y0 + 1) > 40000) return false; // absurdalnie wielki rect → nie skanuj (i tak lokalnie nie zadziała, ale nie wieszamy klatki)
+			const found = new Map(); // structKey -> slim
+			for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+				try { const st = SA.getAtCell(state, x, y); if (st) found.set(structKey(st), slimStruct(st)); } catch (e) {}
+			}
+			if (!found.size) return true; // nic w recie — i tak zjadamy akcję (klient nie może rozbierać lokalnie)
+			const list = [...found.values()];
+			try { net.send({ t: "act", k: "demolish", list }); } catch (e) {}
+			log("CLIENT demolish rect →", list.length, "struktur");
+			return true; // pomiń lokalną (nie-działającą) rozbiórkę — potwierdzenie przyjdzie przez st rm
+		} catch (e) { return false; }
 	};
 
 	function replayAction(msg, fromId) {
@@ -1220,7 +1266,7 @@
 				if ((ST._plRxDiag = (ST._plRxDiag || 0) + 1) <= 300) log("HOST RX place:", msg.type, "@", msg.x, msg.y, "od", fromId);
 				ST._applyingNet = true;
 				let built = null;
-				try { built = buildOne(state, { type: msg.type, x: msg.x, y: msg.y }, true); } finally { ST._applyingNet = false; }
+				try { built = buildOne(state, { type: msg.type, x: msg.x, y: msg.y, data: msg.data || undefined }, true); } finally { ST._applyingNet = false; }
 				if (built) {
 					const inStore = (state.store.structures || []).indexOf(built) >= 0;
 					const list = [slimStruct(built)]; net.send({ t: "st", k: "add", list });

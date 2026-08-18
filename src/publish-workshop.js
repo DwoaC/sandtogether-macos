@@ -19,28 +19,31 @@ const DESCRIPTION = `[h1]SandTogether — Co-op Multiplayer for Sandustry[/h1]
 
 Play Sandustry together over the internet — no server, no port forwarding. Connect through Steam friend invites. Up to 4 players.
 
-[h2]⚠ AFTER SUBSCRIBING — READ THIS (one-time setup)[/h2]
-Sandustry cannot auto-load this kind of mod yet, so after subscribing you run a quick one-time installer:
+[h2]⚠ AFTER SUBSCRIBING — READ THIS (ONE-TIME setup, ever)[/h2]
+Sandustry cannot auto-load this kind of mod yet, so after subscribing you run the installer [b]once[/b] — after that the mod [b]updates itself automatically[/b] at every game launch:
 [olist]
 [*] Subscribe (you already did) and let Steam finish downloading.
 [*] Open the mod folder. In Steam: right-click Sandustry → Manage → Browse local files, go up one level, then open: steamapps\\workshop\\content\\2764460\\3784750764\\  (or just search your PC for "SandTogether")
 [*] Right-click [b]install.bat[/b] → Run (or install.ps1 → Run with PowerShell). It finds your game and installs the mod automatically. No Node.js or internet needed.
 [*] Launch Sandustry from Steam. A [b]SandTogether[/b] panel appears in the top-right corner.
 [/olist]
-Both players need to do this. Full step-by-step in README.md (English) / INSTRUKCJA.md (Polski) inside the folder.
+That's it — [b]forever[/b]. From v0.9.39 the mod checks the Workshop folder at every launch and installs newer versions by itself (the game restarts once when it does). Both players are always on the same version automatically.
 
-[b]Po polsku:[/b] Po zasubskrybowaniu wejdź do folderu moda (Steam → prawy na Sandustry → Zarządzaj → Przeglądaj pliki lokalne → folder wyżej → steamapps\\workshop\\content\\2764460\\3784750764\\), kliknij prawym [b]install.bat[/b] → Uruchom. Instalator sam znajdzie grę i wgra moda. Odpal grę — panel SandTogether jest w prawym górnym rogu. Musi to zrobić każdy z graczy. Pełna instrukcja: INSTRUKCJA.md.
+[b]Po polsku:[/b] Po zasubskrybowaniu wejdź do folderu moda (Steam → prawy na Sandustry → Zarządzaj → Przeglądaj pliki lokalne → folder wyżej → steamapps\\workshop\\content\\2764460\\3784750764\\), kliknij prawym [b]install.bat[/b] → Uruchom — [b]tylko RAZ[/b]. Od wersji 0.9.39 mod aktualizuje się sam przy każdym starcie gry (gra raz się zrestartuje przy aktualizacji). Odpal grę — panel SandTogether jest w prawym górnym rogu. Pełna instrukcja: INSTRUKCJA.md.
 
-[h2]Features (v0.9.36 — full co-op)[/h2]
+[h2]Features (v0.9.39 — full co-op)[/h2]
 [list]
-[*] Steam invites (or LAN with auto-reconnect) — zero network setup
-[*] Shared live world: sand, fluids, digging, unlocked zones — one authoritative simulation streamed in real time (fog-of-war areas are skipped, so joining is fast even on huge maps)
+[*] AUTO-UPDATE: install once, the mod keeps itself (and both players) up to date at every launch
+[*] Steam invites (or LAN) with AUTO-RECONNECT on both transports — zero network setup
+[*] Shared live world: sand, fluids, digging, unlocked zones — one authoritative simulation streamed in real time (row-delta protocol + fog-of-war skipping = low bandwidth, fast joins even on huge maps)
+[*] Team chat in the panel; item drops appear instantly for everyone
 [*] Every player tool works for everyone: shovel, spray, firearms & rockets, vacuum, grabber, flamethrower, cryoblaster, demolisher
 [*] One shared factory: build, demolish, move, copy-paste blueprints, pipes, signal wiring & buttons — on both sides
 [*] Shared team progression: research/upgrades pool, tech tree, story steps, objectives, critter collection, factory processes
 [*] Item pickup with full effects (artifacts, orbs, keys), shared resources; creatures, drones and projectiles synchronized; world-event sounds forwarded
 [*] See your teammate: real player models with equipped tools, build ghosts and grabber crosshairs, off-screen arrows
-[*] Steam achievements keep working; the panel warns in red on any mod-version mismatch
+[*] Per-player memory: rejoin a world and you're back where you left off, with your inventory
+[*] Steam achievements keep working; the panel warns in red on mod-version or game-build mismatch
 [*] Bilingual UI (English / Polski)
 [/list]
 
@@ -64,7 +67,7 @@ Both players must run the same mod version (the panel warns in red if they diffe
 [/list]
 
 [h2]Installation[/h2]
-This mod patches the game files (the game has no built-in mod loader for Early Access yet). Subscribe, then run [b]install.ps1[/b] from this item's folder (right-click → Run with PowerShell). Full instructions in README.md (EN) / INSTRUKCJA.md (PL). Both players need the mod (same version — the mod checks and warns on mismatch).
+This mod patches the game files (the game has no built-in mod loader for Early Access yet). Subscribe, then run [b]install.bat[/b] from this item's folder — [b]once[/b]. From then on the mod auto-updates itself at every game launch, so both players always match. Full instructions in README.md (EN) / INSTRUKCJA.md (PL).
 
 [h2]💛 Thank you — this mod is community-built[/h2]
 Huge thanks to the code contributors: [b]dotNine[/b] (player models, world auto-transfer, collision sync) and [b]Knight-HD[/b] (building placement, grabber rework, teammate ghosts — a whole pull request!).

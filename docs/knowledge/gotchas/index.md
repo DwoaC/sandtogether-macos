@@ -12,4 +12,5 @@ description: Known traps for the macOS port — read before touching install, pa
 - [electron-as-node-asar](electron-as-node-asar.md) — ELECTRON_RUN_AS_NODE intercepts fs calls on .asar paths; need process.noAsar
 - [ws-hello-mver-false-alarm](ws-hello-mver-false-alarm.md) — LAN sessions always flag "old mod" on the host; upstream asymmetry, cosmetic
 - [client-demolish-red-blocks](client-demolish-red-blocks.md) — client demolishes strand red foundation tiles; only a host demolisher drag clears them
-- [steam-invite-join-fails-macos](steam-invite-join-fails-macos.md) — invites deliver but join stalls after GameLobbyJoinRequested; open bug, LAN unaffected
+- [steam-invite-join-fails-macos](steam-invite-join-fails-macos.md) — FIXED: osx steamworks callbacks are snake_case; read fields via pickField
+- [invite-button-overlay-macos](invite-button-overlay-macos.md) — Invite button dead on mac (overlay); use friends-list Join Game

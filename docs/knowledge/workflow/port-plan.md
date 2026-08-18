@@ -6,7 +6,7 @@ tags: [porting, plan, macos]
 use_when:
   - starting a work session on this repo and choosing what to do next
   - writing a design spec for any port work item
-timestamp: 2026-08-18T21:45:00Z
+timestamp: 2026-08-18T23:59:00Z
 ---
 
 # macOS port plan
@@ -37,9 +37,13 @@ port is about installation, launch, paths, and anchor verification. Order:
    mirroring). Host shows a false "old mod" warning — upstream WS
    quirk, see
    [ws-hello-mver-false-alarm](../gotchas/ws-hello-mver-false-alarm.md).
-6. **Steam P2P test** — steamworks.js `dist/osx` is bundled (verified);
-   test lobby create/invite/join, ideally cross-platform vs a Windows
-   host.
+6. **Steam P2P test** — ✅ DONE 2026-08-18 mac↔mac after fixing the
+   snake_case callback bug
+   ([steam-invite-join-fails-macos](../gotchas/steam-invite-join-fails-macos.md)):
+   friend-list invite → joined in ~350 ms, P2P hello + mver both ways.
+   In-game Invite button remains dead on mac (overlay —
+   [invite-button-overlay-macos](../gotchas/invite-button-overlay-macos.md)).
+   Cross-platform vs Windows still untested.
 7. **Player docs** — macOS README section; upstream keeps EN + PL.
 
 Knowledge impact: every step that verifies an "unverified" claim in the

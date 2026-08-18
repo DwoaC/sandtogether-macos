@@ -1,39 +1,54 @@
 ---
 type: Gotcha
-title: Steam invite join never completes on macOS
-description: mac↔mac Steam invites deliver but the join stalls after GameLobbyJoinRequested — LAN transport unaffected; fix not yet attempted.
-tags: [steam-p2p, steamworks, macos, lobby, open-bug]
+title: osx steamworks.js emits snake_case callback fields (broke invite join)
+description: The osx steamworks binary delivers callback payloads with snake_case keys where win64 uses camelCase — any handler reading only camelCase silently no-ops on mac. Fixed with pickField().
+tags: [steam-p2p, steamworks, macos, callbacks, fixed]
 use_when:
-  - debugging Steam invite/lobby join on macOS
-  - deciding which transport to recommend to mac players
-timestamp: 2026-08-18T23:30:00Z
+  - handling any steamworks.js callback payload field
+  - debugging a Steam feature that works on Windows but silently fails on mac
+timestamp: 2026-08-18T23:59:00Z
 ---
 
-# Steam invite join never completes on macOS
+# osx steamworks.js emits snake_case callback fields
 
-Tier 2b test (2026-08-18, two Apple Silicon Macs, mod v0.9.33 tree):
+FIXED 2026-08-18 (commit e2e52c0 + deploy fix c786cc2); Steam invite
+join verified working mac↔mac: request → joined in ~350 ms, P2P hello
+both ways, mver OK both ways.
 
-What works, per logs:
-- steamworks.js inits both sides ("Steam OK — nick/id" logged)
-- Host creates lobby: `event: hosting {"transport":"steam","lobbyId":"109775242569362426"}`
-- Invite delivered; client logs `GameLobbyJoinRequested` with the
-  correct friend + lobby ids
+## Root cause
 
-Then nothing — no `joined`, no peer events. Failure is downstream of
-the join request: `joinSteamLobby()` or P2P session establishment in
-`src/st-main.js`. Not investigated further (parked in favor of the
-upstream PR); LAN transport fully works, READMEs steer mac players
-to Host LAN / Join LAN.
+The game bundles steamworks.js 0.3.1 with per-platform native binaries.
+Callback payload field names differ by binary: win64 emits camelCase
+(`lobbySteamId`), osx emits snake_case (`lobby_steam_id` — captured in
+the log). `GameLobbyJoinRequested` read only camelCase names, got
+`undefined`, and the `if (lobbyId !== null)` guard silently skipped
+`joinSteamLobby`. Invite delivered, join never started, no error.
 
-Next debugging session: start at `joinSteamLobby` in `src/st-main.js`,
-add logging around lobby.join() and the P2P channel setup, check
-whether the osx steamworks.js build supports the networking API the
-mod uses (SDR / ISteamNetworkingMessages vs old P2P API).
+## Fix
 
-Disclosed in the upstream PR:
-<https://github.com/IronBamBam1990/sandtogether/pull/2>
+`pickField(data, ...keys)` in `src/st-main.js` tries both casings, used
+in `GameLobbyJoinRequested` and `P2PSessionRequest` (same risk on the
+host's accept path). Unknown-shape payloads now emit a visible error
+event instead of a silent no-op. Test: scratchpad
+`test-callback-fields.js` runs the real function against both
+platforms' captured payloads.
+
+## Rule
+
+Any new steamworks.js callback handler must read fields through
+`pickField` with both casings. Suspect this class of bug whenever a
+Steam feature works on Windows and silently does nothing on mac.
+
+## Deployment trap that masked the fix
+
+First deploy shipped OLD code: the fix went into `src/st-main.js` but
+the dev installer's payload fallback was `dist-package/src/` (the
+release-time copy). Now the fallback is `../src` and `dist-package/src`
+was synced. Rule: after editing mod source, verify the *installed* file
+(`grep pickField "<game>/Contents/Resources/app/st-main.js"`) before
+retesting.
 
 ## Related
 
-- [transports](../systems/transports.md) — the Steam path that stalls
-- [test-environment](../meta/test-environment.md) — tier 2b definition
+- [invite-button-overlay-macos](invite-button-overlay-macos.md) — the OTHER invite problem, still open
+- [transports](../systems/transports.md) — Steam transport now fully working on mac

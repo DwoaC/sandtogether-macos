@@ -7,10 +7,20 @@ zaproszenia Steam (lub LAN), do 4 graczy. Osiągnięcia Steam działają normaln
 
 ## Instalacja — RAZ, na zawsze
 
+**Windows:**
 1. Miej zainstalowane Sandustry ze Steama (odpal raz normalnie).
 2. Kliknij prawym na `install.bat` → **Uruchom** (albo `install.ps1` → Uruchom
    w PowerShell; jeśli Windows blokuje: `powershell -ExecutionPolicy Bypass -File install.ps1`).
 3. Odpal grę — panel **SandTogether** pojawi się w prawym górnym rogu.
+
+**macOS** (wkład społeczności — DwoaC, przetestowane na Apple Silicon):
+1. Miej zainstalowane Sandustry ze Steama (odpal raz normalnie).
+2. Kliknij dwa razy `install.command` (albo w Terminalu: `bash install.command`;
+   jeśli macOS blokuje: Ustawienia → Prywatność i ochrona → Otwórz mimo to).
+   Bez zależności — instalator używa silnika samej gry.
+3. Odpalaj grę przez `SandTogether-Launch.command` (sam doinstaluje moda,
+   gdyby update Steama go cofnął) albo normalnie ze Steama.
+   LAN co-op w pełni zweryfikowany; zaproszenia Steam dostały fix w 0.9.41.
 
 **To wszystko — na zawsze.** Od wersji 0.9.39 mod **aktualizuje się sam** przy
 każdym starcie gry (z Twojej subskrypcji Warsztatu; gra raz się zrestartuje przy

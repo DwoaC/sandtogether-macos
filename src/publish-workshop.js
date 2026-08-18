@@ -24,7 +24,7 @@ Sandustry cannot auto-load this kind of mod yet, so after subscribing you run th
 [olist]
 [*] Subscribe (you already did) and let Steam finish downloading.
 [*] Open the mod folder. In Steam: right-click Sandustry → Manage → Browse local files, go up one level, then open: steamapps\\workshop\\content\\2764460\\3784750764\\  (or just search your PC for "SandTogether")
-[*] Right-click [b]install.bat[/b] → Run (or install.ps1 → Run with PowerShell). It finds your game and installs the mod automatically. No Node.js or internet needed.
+[*] [b]Windows:[/b] right-click [b]install.bat[/b] → Run. [b]macOS:[/b] open Terminal → [b]bash install-macos.command[/b] (uses the game's own engine — no dependencies). The installer finds your game and installs the mod automatically.
 [*] Launch Sandustry from Steam. A [b]SandTogether[/b] panel appears in the top-right corner.
 [/olist]
 That's it — [b]forever[/b]. From v0.9.39 the mod checks the Workshop folder at every launch and installs newer versions by itself (the game restarts once when it does). Both players are always on the same version automatically.
@@ -45,6 +45,7 @@ That's it — [b]forever[/b]. From v0.9.39 the mod checks the Workshop folder at
 [*] Per-player memory: rejoin a world and you're back where you left off, with your inventory
 [*] Steam achievements keep working; the panel warns in red on mod-version or game-build mismatch
 [*] Bilingual UI (English / Polski)
+[*] Windows + macOS (macOS installer is new in 0.9.40 — feedback from Mac players very welcome!)
 [/list]
 
 [h2]How to play (Steam)[/h2]
@@ -103,7 +104,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'Docs refresh: the bundled README.md (EN) / INSTRUKCJA.md (PL) were still describing v0.4-0.5 — they now match v0.9.39 (one-time install + auto-update, current feature list, chat, per-player memory). Mod files unchanged since v0.9.39-beta.',
+    changeNote: 'v0.9.40-beta — macOS SUPPORT! New installer for Mac players: open Terminal and run bash install-macos.command from the mod folder — zero dependencies (it cleverly uses the game engine itself to do the install), handles Gatekeeper, finds your Steam library automatically. The auto-updater now works on macOS too. Honest note: built blind on Windows — Mac players, you are the first real test, please report results (ping tony.s.jennette who asked for this!). Windows players: nothing changes for you, but the auto-updater will pull this version in — that is also its first live test.',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

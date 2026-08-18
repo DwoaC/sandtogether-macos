@@ -197,13 +197,23 @@ function ensureP2pPoll() {
   }, 15);
 }
 
+// Pola callbacków steamworks.js różnią się per platforma: binarka win64 daje
+// camelCase (lobbySteamId), binarka osx snake_case (lobby_steam_id). Bierzemy
+// pierwsze zdefiniowane pole.
+function pickField(o, ...keys) {
+  if (!o) return undefined;
+  for (const k of keys) if (o[k] !== undefined) return o[k];
+  return undefined;
+}
+
 function registerSteamCallbacks() {
   const cb = S.steam.callback;
   const CB = cb.SteamCallback;
   cb.register(CB.P2PSessionRequest, (data) => {
     try {
-      const sid = data && (data.remote !== undefined ? data.remote : data);
-      const sid64 = typeof sid === 'object' && sid !== null && sid.steamId64 !== undefined ? sid.steamId64 : sid;
+      const sid = pickField(data, 'remote', 'steam_id_remote', 'remoteSteamId', 'remote_steam_id');
+      const sidVal = sid !== undefined ? sid : data;
+      const sid64 = typeof sidVal === 'object' && sidVal !== null && sidVal.steamId64 !== undefined ? sidVal.steamId64 : sidVal;
       S.steam.networking.acceptP2PSession(BigInt(sid64));
       log('P2P session accepted:', String(sid64));
     } catch (e) { log('P2PSessionRequest error:', e.message, JSON.stringify(data)); }
@@ -219,9 +229,10 @@ function registerSteamCallbacks() {
   cb.register(CB.GameLobbyJoinRequested, async (data) => {
     // Znajomy kliknął "Dołącz" w Steam — dołączamy do lobby hosta.
     try {
-      const lobbyId = data && (data.lobbySteamId !== undefined ? data.lobbySteamId : data.steamIdLobby !== undefined ? data.steamIdLobby : null);
+      const lobbyId = pickField(data, 'lobbySteamId', 'steamIdLobby', 'lobby_steam_id', 'steam_id_lobby');
       log('GameLobbyJoinRequested:', safeJson(data));
-      if (lobbyId !== null) await joinSteamLobby(String(typeof lobbyId === 'object' ? lobbyId.steamId64 : lobbyId));
+      if (lobbyId !== undefined && lobbyId !== null) await joinSteamLobby(String(typeof lobbyId === 'object' ? lobbyId.steamId64 : lobbyId));
+      else emitEvent('error', { where: 'lobby-join', message: 'lobby id not found in callback payload: ' + JSON.stringify(safeJson(data)) });
     } catch (e) { emitEvent('error', { where: 'lobby-join', message: e.message }); }
   });
   cb.register(CB.LobbyChatUpdate, (data) => {
@@ -404,8 +415,12 @@ function applyBundlePatches(bundlePath, patches) {
 }
 function autoUpdateFromWorkshop() {
   try {
-    const appDir = __dirname; // .../steamapps/common/Sandustry/resources/app
-    const steamapps = path.resolve(appDir, '..', '..', '..', '..');
+    // Windows: steamapps/common/Sandustry/resources/app (4 poziomy w górę)
+    // macOS:   steamapps/common/Sandustry/Sandustry.app/Contents/Resources/app (6 poziomów)
+    // → szukamy katalogu "steamapps" W GÓRĘ zamiast liczyć poziomy.
+    let steamapps = __dirname;
+    for (let i = 0; i < 8 && path.basename(steamapps).toLowerCase() !== 'steamapps'; i++) steamapps = path.dirname(steamapps);
+    if (path.basename(steamapps).toLowerCase() !== 'steamapps') return;
     const ws = path.join(steamapps, 'workshop', 'content', '2764460', WORKSHOP_ITEM);
     const wsMod = path.join(ws, 'src', 'sandtogether.js');
     const localMod = path.join(appDir, 'dist', 'js', 'sandtogether.js');

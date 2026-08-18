@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.28-beta";
+	const VER = "0.9.29-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -1230,16 +1230,18 @@
 			if (!isClientSync() || !ST.wsx.paused) return false; // host/solo → normalna lokalna rozbiórka
 			// rury (Pipe) idą w grze osobną funkcją — nie przechwytujemy (na razie lokalnie)
 			try { const sel = ST.FH.action && ST.FH.action.getSelected && ST.FH.action.getSelected(state); if (sel && String(sel.id).toLowerCase().indexOf("pipe") >= 0) return false; } catch (e) {}
-			const SA = structNs(); if (!SA) return false;
-			const cs = 4; // cellSize (stały w grze)
-			const x0 = Math.floor(Math.min(start.x, end.x) / cs), x1 = Math.ceil(Math.max(start.x, end.x) / cs);
-			const y0 = Math.floor(Math.min(start.y, end.y) / cs), y1 = Math.ceil(Math.max(start.y, end.y) / cs);
-			if ((x1 - x0 + 1) * (y1 - y0 + 1) > 40000) return false; // absurdalnie wielki rect → nie skanuj (i tak lokalnie nie zadziała, ale nie wieszamy klatki)
+			const SA = structNs(); if (!SA) { log("_demol: brak API struktur"); return false; }
+			// UWAGA: H(e) zwraca rect JUŻ W KOMÓRKACH (dzieli przez cellSize w środku — snappedMinX/cellSize).
+			// Bug 0.9.28: dzieliliśmy DRUGI raz przez 4 → skan 4x mniejszego obszaru przy originie → zawsze
+			// pusto → cichy no-op bez logu ("just nothing happens, no log" — TCentraL).
+			const x0 = Math.floor(Math.min(start.x, end.x)), x1 = Math.ceil(Math.max(start.x, end.x));
+			const y0 = Math.floor(Math.min(start.y, end.y)), y1 = Math.ceil(Math.max(start.y, end.y));
+			if ((x1 - x0 + 1) * (y1 - y0 + 1) > 40000) { log("_demol: rect za duży", x0, y0, x1, y1); return false; }
 			const found = new Map(); // structKey -> slim
 			for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
 				try { const st = SA.getAtCell(state, x, y); if (st) found.set(structKey(st), slimStruct(st)); } catch (e) {}
 			}
-			if (!found.size) return true; // nic w recie — i tak zjadamy akcję (klient nie może rozbierać lokalnie)
+			if (!found.size) { log("_demol: pusty rect [" + x0 + "," + y0 + " → " + x1 + "," + y1 + "] — nic do rozbiórki"); return true; }
 			const list = [...found.values()];
 			try { net.send({ t: "act", k: "demolish", list }); } catch (e) {}
 			log("CLIENT demolish rect →", list.length, "struktur");

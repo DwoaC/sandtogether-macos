@@ -93,7 +93,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.28-beta — three fixes from TCentraL\'s reports (thank you!): (1) DEMOLISHING AS THE JOINING PLAYER WORKS NOW — before, it only recolored structures red: the actual removal ran in the paused local simulation and never happened. The demolisher drag is now intercepted and executed by the host (works for single clicks and drag-boxes). (2) FOUNDATIONS (incl. sloped/stairs) placed by the joining player could not be deleted even by the host — their shape data was dropped in transit, so the host built a degenerate copy. Data is now forwarded — foundations delete normally. (3) Factory process progress (Shake Wet Sand etc.) is now streamed to the joining player — it ran fine on the host but the joiner\'s UI always showed zero progress. Both players update + re-run install.bat.',
+    changeNote: 'v0.9.29-beta — hotfix for 0.9.28\'s client demolish: the selection rectangle was converted to cell coordinates TWICE, so the mod scanned a wrong (4x smaller) area, found nothing and silently did nothing — exactly the "nothing happens, no log" TCentraL reported minutes after release. Coordinates fixed, and every code path now logs, so a silent failure like this cannot hide again. Demolishing as the joining player should now actually work — clicks and drag-boxes. Both players update + re-run install.bat.',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

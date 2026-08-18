@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.32-beta";
+	const VER = "0.9.33-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -1940,7 +1940,7 @@
 									try { TR.removeAt(state, x, y); cleaned++; } catch (e) {}
 								}
 								if (cleaned) log("demolish-dobicie: usunięto", cleaned, "OSIEROCONYCH kafli fundamentu (czerwone klocki)");
-								else if (!leftovers.size) log("demolish-dobicie: czysto (brak struktur i osieroconych kafli w recie)");
+								// przypadku "czysto" NIE logujemy — każde zwykłe przeciągnięcie demolisherem zaśmiecało log
 							}
 						} catch (e) { log("dobicie kafli error:", e.message); }
 					}

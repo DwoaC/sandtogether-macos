@@ -6,7 +6,7 @@ tags: [testing, multiplayer, network, machines]
 use_when:
   - planning or running a multiplayer test session
   - deploying a mod build to the second test machine
-timestamp: 2026-08-18T20:00:00Z
+timestamp: 2026-08-18T22:00:00Z
 ---
 
 # Multiplayer test environment
@@ -38,17 +38,28 @@ Install BOTH machines from this fork at the **same pinned commit** (the
 in-game panel hard-warns on mod version mismatch, and the upstream
 Workshop item auto-updates on its own schedule — don't mix sources).
 
+## Deployment state
+
+Mod deployed to Neo 2026-08-18 from fork commit `38eb6e9`: repo rsynced
+to `neo:~/sandtogether-macos/`, installer run over SSH (20/20 changes),
+patched files verified. Jason's machine installed from the same tree.
+Redeploy after changes: `rsync -a --exclude .git <repo>/ neo:sandtogether-macos/`
+then run `install.js` over SSH via the game's Electron.
+
 ## Test sequence
 
-1. **Tier 1** — two instances on Jason's Mac, LAN loopback 27777:
-   validates the port itself ([dev-loop-macos](../workflow/dev-loop-macos.md)).
-2. **Tier 2a** — Jason ↔ Neo over LAN (10.194.x, port 27777): mac↔mac
-   without Steam. macOS firewall may prompt on the host's listener.
+1. **Tier 1** — ✅ PASSED 2026-08-18 (two instances on Jason's Mac,
+   loopback 27777, `--st-autotest`; world stream live both ways).
+2. **Tier 2a** — Jason ↔ Neo over LAN: host on Jason's Mac (IP
+   10.194.1.173), Tony joins `10.194.1.173:27777` via the panel's Join
+   LAN. macOS firewall may prompt on the host's listener. Expect the
+   false "old mod" warning on the host —
+   [ws-hello-mver-false-alarm](../gotchas/ws-hello-mver-false-alarm.md).
 3. **Tier 2b** — Steam P2P: Host (Steam) → Invite → accept. Exercises
    osx steamworks.js, invite flow, `+connect_lobby` passthrough. If 2a
    works and 2b fails, the fault is in the Steam layer, not the sync.
 4. On any failure grab both sides' `[SandTogether]`-tagged logs
-   (`~/Library/Application Support/Sandustry/logs/main.log`).
+   (`~/Library/Logs/Sandustry/main.log`).
 
 ## Related
 

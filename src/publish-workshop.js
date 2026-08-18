@@ -15,7 +15,7 @@ const PREVIEW = path.resolve(__dirname, '../workshop/preview.png');
 
 const TITLE = 'SandTogether — Co-op Multiplayer';
 const DESCRIPTION = `[h1]SandTogether — Co-op Multiplayer for Sandustry[/h1]
-[b]Author: Kamil Padula[/b] — [b]Contributor: dotNine[/b]
+[b]Author: Kamil Padula[/b] — [b]Contributors: dotNine, Knight-HD[/b]
 
 Play Sandustry together over the internet — no server, no port forwarding. Connect through Steam friend invites. Up to 4 players.
 
@@ -93,7 +93,7 @@ The full source code is on GitHub: [url=https://github.com/IronBamBam1990/sandto
   const details = {
     title: TITLE,
     description: DESCRIPTION,
-    changeNote: 'v0.9.8-beta — the mod is now OPEN SOURCE: github.com/IronBamBam1990/sandtogether (MIT). Pull requests welcome — including a macOS installer, the mod code itself is cross-platform. Also in this version: the panel now shows a RED warning with exact versions when the two players run different mod versions (this was the #1 hidden cause of "nothing works" reports — one player on an old mod and no way to tell). Includes all 0.9.7 fixes: works with today\'s game update, big-factory desync fixed (player-area streams always fresh), ESC-menu no longer breaks sync, disconnect freezes the world instead of silently forking. IMPORTANT: after every mod update BOTH players must re-run install.bat and check the panel shows the same version.',
+    changeNote: 'v0.9.27-beta — HUGE community update, merging Knight-HD\'s pull request (thank you!) plus review fixes. For the joining player: BUILDING PLACEMENT FINALLY WORKS (new game-level hook + numeric structure types that were silently dropped — this was "can delete but not build"), the grabber is reworked host-side (fixes the ~900-per-session grabPlace crash and "grabs 2-3 then stops"), the world mirror now syncs element types (v4 protocol), build ghosts/grabber crosshairs of your teammate are visible, and structure sync got both faster (dirty-cell priority lane) and safer (staged ghost cleanup instead of aggressive deletion). Review hardening on top: world-trust resets between sessions, harvest respects your tank capacity, host rate-limits grab requests. BOTH players MUST update in the same sitting (v4 protocol is not compatible with older versions — the panel will warn in red).',
     previewPath: PREVIEW,
     contentPath: CONTENT,
     visibility: vis,

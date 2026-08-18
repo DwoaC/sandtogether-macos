@@ -57,6 +57,10 @@
         {
           "anchor": "z=(e,t)=>{var n,l,m,p,b,v,C,k;let E=e.session;const B=t.data.matrix;let S=B[1];",
           "patched": "z=(e,t)=>{if(window.SandTogether&&window.SandTogether._grab&&window.SandTogether._grab(e,t))return;var n,l,m,p,b,v,C,k;let E=e.session;const B=t.data.matrix;let S=B[1];"
+        },
+        {
+          "anchor": "H=(e,t)=>{var n,l,m,g,U,x,S,A;let M=e.session;const T=t.data.matrix;let C=T[1];",
+          "patched": "H=(e,t)=>{if(window.SandTogether&&window.SandTogether._grab&&window.SandTogether._grab(e,t))return;var n,l,m,g,U,x,S,A;let M=e.session;const T=t.data.matrix;let C=T[1];"
         }
       ]
     },

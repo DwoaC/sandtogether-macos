@@ -16,7 +16,7 @@
 			window.electron && window.electron.log && window.electron.log("info", "SandTogether:game", line);
 		} catch (e) {}
 	};
-	const VER = "0.9.26-beta";
+	const VER = "0.9.27-beta";
 	const AUTHOR = "Kamil Padula";
 	const CONTRIBUTORS = "dotNine";
 	const VACUUM_CAPS = [500, 1000, 1500, 2000, 2500, 3000]; // tabela pojemności z kodu gry (moduł 6420)
@@ -278,6 +278,7 @@
 				ST.net.role = "client"; ST.net.transport = ev.transport;
 				ST.wsx.everApplied = false; ST.wsx.mismatchLogged = false; // nowa sesja klienta
 				ST._trustedWid = null; ST._pendingTrustUntil = 0;
+				ST._gotHostWorld = false; // KRYTYCZNE: zaufanie do świata NIE przenosi się między sesjami (inny host = inny świat; bez resetu lustro nadpisałoby zły świat)
 				ST._fireQ = []; ST._cryoQ = []; ST._grabbedCells.clear(); ST._placedCells.clear(); // stan z poprzedniej sesji = inne współrzędne/świat
 				setStatus(t("joined", ev.transport));
 			} else if (ev.kind === "peer-hello" || ev.kind === "peer-connected") {
@@ -298,6 +299,7 @@
 			} else if (ev.kind === "stopped") {
 				ST.net.role = "idle"; ST.peers.clear(); removeAllPeerPuppets(); setStatus(t("offline"), "#aaa"); showInviteButton(false); ST.net.lobbyId = null; updateLobbyIdDisplay(); updatePingDisplay();
 				ST._fireQ = []; ST._cryoQ = []; ST._grabbedCells.clear(); ST._placedCells.clear();
+				ST._gotHostWorld = false;
 				setClientPaused(false);
 			} else if (ev.kind === "version-mismatch") setStatus(t("ver_mismatch"), "#f66");
 			else if (ev.kind === "error") setStatus(t("error", ev.message), "#f66");
@@ -829,14 +831,26 @@
 			const nowS = performance.now();
 			for (const [hostList, localList] of [[snap.s, state.store.structures || []], [snap.p, state.store.pipes || []]]) {
 				const hostMap = new Map(hostList.map((s) => [structKey(s), s]));
-				// RECONCILE ADDITIF (fix majeur): NIE usuwamy już lokalnych struktur na podstawie NIEOBECNOŚCI
-				// w snapshotcie. To kasowało pozy gracza (drobny rozjazd klucza pozycji / host chwilowo bez nich
-				// w JSON-ie / typy stawiane inną ścieżką niż building:place) → "batiment se pose puis disparaît".
-				// Prawdziwe usunięcia i tak przychodzą jawnym kanałem "st rm"/"st mv"/demolish. Rozjazdy czyści Resync.
-				// (Diagnostyka: policz ile struktur host snapshot NIE zawiera — bez kasowania.)
-				let _absent = 0;
-				for (const s of localList) if (!hostMap.has(structKey(s))) _absent++;
-				if (_absent && (ST._rmDiag = (ST._rmDiag || 0) + 1) <= 20) log("RECONCILE: host snapshot nie ma", _absent, "lokalnych struktur (NIE kasuję — additif); snapshot ma", hostList.length);
+				// RECONCILE ETAPOWY (Knight-HD: additive fix + nasza siatka bezpieczeństwa):
+				// NIE kasujemy od razu na podstawie nieobecności w snapshotcie (to usuwało świeże budynki przy
+				// drobnym rozjeździe klucza/chwilowym braku w JSON-ie hosta). ALE czysty additive zostawiał
+				// WIECZNE duchy (struktury usunięte przez sim / w oknie rozłączenia — bez eventu "st rm").
+				// Kompromis: kasuj dopiero gdy struktura jest nieobecna w >=3 KOLEJNYCH snapshotach (~7,5 s)
+				// I nie była świeżo postawiona/potwierdzona (30 s ochrony _structApplied).
+				if (!ST._absentCount) ST._absentCount = new Map();
+				for (const s of localList) {
+					const k = structKey(s);
+					if (hostMap.has(k)) { ST._absentCount.delete(k); continue; }
+					const cnt = (ST._absentCount.get(k) || 0) + 1;
+					ST._absentCount.set(k, cnt);
+					const appliedTs = ST._structApplied.get(k);
+					const fresh = appliedTs != null && nowS - appliedTs < 30000;
+					if (cnt >= 3 && !fresh) {
+						log("RECONCILE: usuwam ducha (nieobecny w " + cnt + " snapshotach):", k);
+						removeOne(state, s);
+						ST._absentCount.delete(k); ST._structApplied.delete(k);
+					}
+				}
 				// dobuduj/zaktualizuj brakujące (klient: force=true — render bez kontroli kolizji/zapisu komórek)
 				for (const s of hostList) { buildOne(state, s, true); ST._structApplied.set(structKey(s), nowS); }
 			}
@@ -1024,9 +1038,15 @@
 				const m = state.session && state.session.input && state.session.input.mouse;
 				const cp = m && m.cellPosition;
 				if (cp && cp.x >= 0 && cp.y >= 0) {
-					ST._grabTool = tool; // zapamiętaj do wypełnienia tanku po odpowiedzi hosta
-					try { net.send({ t: "act", k: "grabH", x: cp.x | 0, y: cp.y | 0 }); } catch (e) {}
-					if ((ST._grabHDiag = (ST._grabHDiag || 0) + 1) <= 40) log("CLIENT grabH forward @", cp.x | 0, cp.y | 0);
+					// policz WOLNE sloty tanku i wyślij hostowi — host zbierze najwyżej tyle
+					// (bez tego host niszczył do 48 elementów, a nadmiar ponad pojemność tanku PRZEPADAŁ)
+					let free = 0;
+					for (let i = 2; i < B.length; i++) if (B[i] === 0) free++;
+					if (free > 0) {
+						ST._grabTool = tool; // zapamiętaj do wypełnienia tanku po odpowiedzi hosta
+						try { net.send({ t: "act", k: "grabH", x: cp.x | 0, y: cp.y | 0, f: free }); } catch (e) {}
+						if ((ST._grabHDiag = (ST._grabHDiag || 0) + 1) <= 40) log("CLIENT grabH forward @", cp.x | 0, cp.y | 0, "free=" + free);
+					}
 				}
 			}
 			return true; // pomiń lokalne zbieranie (host zrobi to autorytatywnie)
@@ -1036,14 +1056,21 @@
 	function hostHarvestGrab(msg, fromId) {
 		const state = ST.state;
 		if (!state || !ST.FH) return;
+		// rate-limit per gracz (klient sam ogranicza do 100ms, ale host nie może ufać klientowi)
+		if (!ST._grabHLast) ST._grabHLast = new Map();
+		const tNow = performance.now();
+		if (tNow - (ST._grabHLast.get(fromId) || 0) < 80) return;
+		ST._grabHLast.set(fromId, tNow);
 		const el = ST.FH.elements || {};
 		const getInfo = el.getInfoAtPos;
 		const removeAt = el.removeAt;
 		if (!getInfo || !removeAt) { if (!ST._grabApiWarned) { ST._grabApiWarned = true; log("BŁĄD grabH: brak getInfoAtPos/removeAt — el:", Object.keys(el).join(",")); } return; }
 		const types = [];
+		// cap = wolne sloty tanku klienta (msg.f); stary klient bez f → ostrożne 8. Nigdy >48.
+		const cap = Math.max(1, Math.min(48, typeof msg.f === "number" ? msg.f : 8));
 		const R = 4; let taken = 0;
-		for (let dy = -R; dy <= R && taken < 48; dy++)
-			for (let dx = -R; dx <= R && taken < 48; dx++) {
+		for (let dy = -R; dy <= R && taken < cap; dy++)
+			for (let dx = -R; dx <= R && taken < cap; dx++) {
 				const x = msg.x + dx, y = msg.y + dy;
 				try {
 					const info = getInfo(state, x, y);
